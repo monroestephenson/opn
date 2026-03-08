@@ -24,7 +24,7 @@ pre-commit install
 ```bash
 $ opn port 8080
 PROTO  LOCAL ADDRESS      REMOTE ADDRESS  STATE        PID   PROCESS
-TCP    127.0.0.1:8080     0.0.0.0:0       LISTEN       1234  node
+TCP    127.0.0.1:8080     -               LISTEN       1234  node
 
 $ opn port 8080 --json
 [
@@ -72,6 +72,7 @@ opn sockets                # List all open sockets
 opn watch                  # Interactive terminal mode
 opn watch --target port --port 8080
 opn watch --target file --file /tmp/demo.log
+opn watch --target sockets --theme kanagawa
 ```
 
 ## How This Differs from lsof
@@ -137,6 +138,7 @@ Results vary by OS, permissions, workload size, and background system activity. 
 ## Known Limitations
 
 - Requires appropriate permissions to inspect other users' processes (run with `sudo` for full visibility)
-- `watch` controls: `j/k` or arrow keys move selection, `g/G` jump top/bottom, `x` sends SIGTERM to selected PID, `space` pause, `s` sort, `q` quit
+- `watch` controls: `j/k` or arrow keys move selection, `g/G` jump top/bottom, `x` opens a terminate confirmation dialog (`y`/`Enter` confirm, `n`/`Esc` cancel), `space` pause, `s` sort, `q` quit
+- `watch` themes: `catppuccin-latte`, `catppuccin`, `ethereal`, `everforest`, `flexoki-light`, `gruvbox`, `hackerman`, `kanagawa`, `matte-black`, `miasma`, `nord`, `osaka-jade`, `ristretto`, `rose-pine`, `tokyo-night`, `vantablack`, `white`
 - Some e2e tests rely on local socket bind permissions and may skip in restricted environments
 - Race conditions with short-lived processes are handled by skipping vanished PIDs

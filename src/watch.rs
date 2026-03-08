@@ -20,8 +20,8 @@ pub fn run(
         disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen,
     };
     use ratatui::backend::CrosstermBackend;
-    use ratatui::layout::{Constraint, Direction, Layout};
-    use ratatui::widgets::{Block, Borders, Cell, Paragraph, Row, Table, TableState};
+    use ratatui::layout::{Alignment, Constraint, Direction, Layout};
+    use ratatui::widgets::{Block, Borders, Cell, Clear, Paragraph, Row, Table, TableState};
     use ratatui::Terminal;
     use std::io::stdout;
     use std::time::{Duration, Instant};
@@ -72,6 +72,7 @@ pub fn run(
     let mut selected = 0usize;
     let mut table_state = TableState::default();
     let mut status_msg = String::new();
+    let mut confirm_kill: Option<(u32, String)> = None;
     let title = match target {
         WatchTarget::Sockets => "Sockets",
         WatchTarget::Port => "Port",
@@ -156,34 +157,35 @@ pub fn run(
             .row_highlight_style(selected_row_style(&palette))
             .highlight_symbol(">> ");
             frame.render_stateful_widget(table, chunks[1], &mut table_state);
+
+            if let Some((pid, process_name)) = &confirm_kill {
+                let popup = centered_rect(60, 30, area);
+                frame.render_widget(Clear, popup);
+                let block = Block::default()
+                    .title("Confirm Termination")
+                    .borders(Borders::ALL)
+                    .style(Style::default().fg(palette.header));
+                let text = format!(
+                    "Terminate PID {} ({})?\n\nPress y/Enter to confirm, n/Esc to cancel.",
+                    pid, process_name
+                );
+                let paragraph = Paragraph::new(text)
+                    .alignment(Alignment::Center)
+                    .block(block)
+                    .style(Style::default().fg(palette.normal));
+                frame.render_widget(paragraph, popup);
+            }
         })?;
 
         let timeout = tick_rate.saturating_sub(last_tick.elapsed());
         if event::poll(timeout)? {
             if let Event::Key(key) = event::read()? {
-                match key.code {
-                    KeyCode::Char('q') => break Ok(()),
-                    KeyCode::Char(' ') => paused = !paused,
-                    KeyCode::Char('s') => sort_key = sort_key.next(),
-                    KeyCode::Down | KeyCode::Char('j') => {
-                        if selected + 1 < rows.len() {
-                            selected += 1;
-                        }
-                    }
-                    KeyCode::Up | KeyCode::Char('k') => {
-                        selected = selected.saturating_sub(1);
-                    }
-                    KeyCode::Char('g') => selected = 0,
-                    KeyCode::Char('G') => {
-                        if !rows.is_empty() {
-                            selected = rows.len() - 1;
-                        }
-                    }
-                    KeyCode::Char('x') => {
-                        if let Some(row) = rows.get(selected) {
-                            match terminate_pid(row.pid) {
+                if let Some((pid, _)) = confirm_kill.clone() {
+                    match key.code {
+                        KeyCode::Char('y') | KeyCode::Enter => {
+                            match terminate_pid(pid) {
                                 Ok(()) => {
-                                    status_msg = format!("sent SIGTERM to pid {}", row.pid);
+                                    status_msg = format!("sent SIGTERM to pid {}", pid);
                                     if !paused {
                                         rows = snapshot_rows(platform, target, port, file, filter)?;
                                         clamp_selection(&mut selected, rows.len());
@@ -194,11 +196,42 @@ pub fn run(
                                     status_msg = err.to_string();
                                 }
                             }
-                        } else {
-                            status_msg = String::from("no row selected");
+                            confirm_kill = None;
                         }
+                        KeyCode::Char('n') | KeyCode::Esc => {
+                            confirm_kill = None;
+                            status_msg = String::from("termination cancelled");
+                        }
+                        _ => {}
                     }
-                    _ => {}
+                } else {
+                    match key.code {
+                        KeyCode::Char('q') => break Ok(()),
+                        KeyCode::Char(' ') => paused = !paused,
+                        KeyCode::Char('s') => sort_key = sort_key.next(),
+                        KeyCode::Down | KeyCode::Char('j') => {
+                            if selected + 1 < rows.len() {
+                                selected += 1;
+                            }
+                        }
+                        KeyCode::Up | KeyCode::Char('k') => {
+                            selected = selected.saturating_sub(1);
+                        }
+                        KeyCode::Char('g') => selected = 0,
+                        KeyCode::Char('G') => {
+                            if !rows.is_empty() {
+                                selected = rows.len() - 1;
+                            }
+                        }
+                        KeyCode::Char('x') => {
+                            if let Some(row) = rows.get(selected) {
+                                confirm_kill = Some((row.pid, row.cols[5].clone()));
+                            } else {
+                                status_msg = String::from("no row selected");
+                            }
+                        }
+                        _ => {}
+                    }
                 }
             }
         }
@@ -678,4 +711,28 @@ fn snapshot_rows(
             Ok(file_rows(&entries))
         }
     }
+}
+
+#[cfg(feature = "watch")]
+fn centered_rect(
+    percent_x: u16,
+    percent_y: u16,
+    r: ratatui::layout::Rect,
+) -> ratatui::layout::Rect {
+    let popup_layout = ratatui::layout::Layout::default()
+        .direction(ratatui::layout::Direction::Vertical)
+        .constraints([
+            ratatui::layout::Constraint::Percentage((100 - percent_y) / 2),
+            ratatui::layout::Constraint::Percentage(percent_y),
+            ratatui::layout::Constraint::Percentage((100 - percent_y) / 2),
+        ])
+        .split(r);
+    ratatui::layout::Layout::default()
+        .direction(ratatui::layout::Direction::Horizontal)
+        .constraints([
+            ratatui::layout::Constraint::Percentage((100 - percent_x) / 2),
+            ratatui::layout::Constraint::Percentage(percent_x),
+            ratatui::layout::Constraint::Percentage((100 - percent_x) / 2),
+        ])
+        .split(popup_layout[1])[1]
 }
