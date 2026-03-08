@@ -1,4 +1,4 @@
-use anyhow::{Context, Result};
+use anyhow::{bail, Context, Result};
 use rayon::prelude::*;
 use std::collections::HashMap;
 use std::collections::HashSet;
@@ -18,14 +18,30 @@ impl LinuxPlatform {
     }
 
     fn uid_to_username(uid: u32) -> String {
-        unsafe {
-            let pw = libc::getpwuid(uid);
-            if pw.is_null() {
-                return uid.to_string();
-            }
-            let name = std::ffi::CStr::from_ptr((*pw).pw_name);
-            name.to_string_lossy().into_owned()
+        let mut pwd: libc::passwd = unsafe { std::mem::zeroed() };
+        let mut result: *mut libc::passwd = std::ptr::null_mut();
+        let sys_buf_len = unsafe { libc::sysconf(libc::_SC_GETPW_R_SIZE_MAX) };
+        let buf_len = if sys_buf_len <= 0 {
+            16 * 1024
+        } else {
+            sys_buf_len as usize
+        };
+        let mut buf = vec![0_u8; buf_len];
+        let rc = unsafe {
+            libc::getpwuid_r(
+                uid,
+                &mut pwd,
+                buf.as_mut_ptr() as *mut libc::c_char,
+                buf.len(),
+                &mut result,
+            )
+        };
+        if rc != 0 || result.is_null() {
+            return uid.to_string();
         }
+        unsafe { std::ffi::CStr::from_ptr(pwd.pw_name) }
+            .to_string_lossy()
+            .into_owned()
     }
 
     fn read_proc_uid(pid: u32) -> Option<u32> {
@@ -42,6 +58,21 @@ impl LinuxPlatform {
     fn read_proc_name(pid: u32) -> Option<String> {
         let comm = fs::read_to_string(format!("/proc/{}/comm", pid)).ok()?;
         Some(comm.trim().to_string())
+    }
+
+    fn parse_proc_start_time(stat_line: &str) -> Option<u64> {
+        let after_comm_idx = stat_line.rfind(") ")? + 2;
+        let after_comm = &stat_line[after_comm_idx..];
+        after_comm.split_whitespace().nth(19)?.parse().ok()
+    }
+
+    fn read_proc_start_time(pid: u32) -> Option<u64> {
+        let stat = fs::read_to_string(format!("/proc/{}/stat", pid)).ok()?;
+        Self::parse_proc_start_time(&stat)
+    }
+
+    fn process_is_stable(pid: u32, expected_start_time: u64) -> bool {
+        Self::read_proc_start_time(pid) == Some(expected_start_time)
     }
 
     fn current_uid() -> u32 {
@@ -169,13 +200,18 @@ impl LinuxPlatform {
 
         let pids = self.list_pids(filter)?;
         let mut results = Vec::new();
-        let mut seen = HashSet::<(u32, u64)>::new();
 
         for pid in pids {
+            let Some(start_time) = Self::read_proc_start_time(pid) else {
+                continue;
+            };
             let process = match self.process_info(pid) {
                 Ok(p) => p,
                 Err(_) => continue,
             };
+            if !Self::process_is_stable(pid, start_time) {
+                continue;
+            }
             if !Self::matches_process_filter(&process, filter) {
                 continue;
             }
@@ -186,6 +222,8 @@ impl LinuxPlatform {
                 Ok(e) => e,
                 Err(_) => continue,
             };
+            let mut pid_seen = HashSet::<u64>::new();
+            let mut pid_results = Vec::new();
 
             for entry in entries {
                 let entry = match entry {
@@ -204,7 +242,7 @@ impl LinuxPlatform {
                 let Some(net_entry) = inode_map.get(&inode) else {
                     continue;
                 };
-                if !seen.insert((pid, inode)) {
+                if !pid_seen.insert(inode) {
                     continue;
                 }
                 if let Some(state) = &filter.state {
@@ -213,13 +251,17 @@ impl LinuxPlatform {
                     }
                 }
 
-                results.push(SocketEntry {
+                pid_results.push(SocketEntry {
                     protocol: net_entry.protocol.clone(),
                     local_addr: format!("{}:{}", net_entry.local_addr, net_entry.local_port),
                     remote_addr: format!("{}:{}", net_entry.remote_addr, net_entry.remote_port),
                     state: net_entry.state.clone(),
                     process: process.clone(),
                 });
+            }
+
+            if Self::process_is_stable(pid, start_time) {
+                results.extend(pid_results);
             }
         }
 
@@ -307,8 +349,13 @@ impl Platform for LinuxPlatform {
     }
 
     fn list_open_files(&self, pid: u32) -> Result<Vec<OpenFile>> {
+        let start_time =
+            Self::read_proc_start_time(pid).with_context(|| format!("PID {} not found", pid))?;
         let fd_dir = format!("/proc/{}/fd", pid);
         let process = Arc::new(self.process_info(pid)?);
+        if !Self::process_is_stable(pid, start_time) {
+            bail!("PID {} changed during inspection", pid);
+        }
         let mut results = Vec::new();
 
         let entries =
@@ -347,6 +394,10 @@ impl Platform for LinuxPlatform {
                 deleted,
                 socket_info: None,
             });
+        }
+
+        if !Self::process_is_stable(pid, start_time) {
+            bail!("PID {} changed during inspection", pid);
         }
 
         Ok(results)
@@ -417,5 +468,22 @@ impl Platform for LinuxPlatform {
         }
 
         Ok(results)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::LinuxPlatform;
+
+    #[test]
+    fn test_parse_proc_start_time_parses_expected_field() {
+        let stat =
+            "12345 (nginx worker) S 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 987654 21 22";
+        assert_eq!(LinuxPlatform::parse_proc_start_time(stat), Some(987654));
+    }
+
+    #[test]
+    fn test_parse_proc_start_time_rejects_invalid_line() {
+        assert_eq!(LinuxPlatform::parse_proc_start_time("1234 invalid"), None);
     }
 }

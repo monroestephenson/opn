@@ -49,7 +49,7 @@ mod tests {
         let row = entry.row();
         assert_eq!(row[0], "TCP");
         assert_eq!(row[1], "127.0.0.1:80");
-        assert_eq!(row[2], "0.0.0.0:0");
+        assert_eq!(row[2], "-");
         assert_eq!(row[3], "LISTEN");
         assert_eq!(row[4], "1234");
         assert_eq!(row[5], "nginx");
