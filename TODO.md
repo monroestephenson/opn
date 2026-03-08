@@ -45,17 +45,17 @@
 ## Phase 6: Socket Listing (`opn sockets`)
 - [x] Linux: Parse all of `/proc/net/{tcp,tcp6,udp,udp6}`, resolve inodes to PIDs
 - [x] macOS: Use `netstat2::iterate_sockets_info()` (no port filter)
-- [~] Filter flags: `--tcp`, `--udp`, `--ipv4`, `--ipv6`, `--state LISTEN` (`--state` pending)
+- [x] Filter flags: `--tcp`, `--udp`, `--ipv4`, `--ipv6`, `--state LISTEN`
 - [ ] Sort output by protocol, then port
 - [x] JSON output
 
 ## Phase 7: Watch Mode (`opn watch`)
-- [ ] Feature-gated behind `watch` Cargo feature
-- [ ] Add `ratatui` + `crossterm` dependencies
-- [ ] TUI layout: table with live-updating rows
+- [x] Feature-gated behind `watch` Cargo feature
+- [x] Add `ratatui` + `crossterm` dependencies
+- [x] TUI layout: table with live-updating rows
 - [ ] Configurable refresh interval (`--interval 2s`)
-- [ ] Support watching ports, files, or all sockets
-- [ ] Keyboard controls: quit (q), pause (space), sort columns
+- [~] Support watching ports, files, or all sockets (currently sockets only)
+- [x] Keyboard controls: quit (q), pause (space), sort columns
 
 ## Improvements & Polish
 
@@ -94,7 +94,7 @@
 ### Error Handling
 - [ ] Distinguish between "no results" and "permission denied" in exit codes
 - [x] Exit code 1 for "no results found", 2 for errors
-- [ ] Structured error output in JSON mode (`{"error": "..."}`)
+- [x] Structured error output in JSON mode (`{"error":{"code","category","message"}}`)
 - [ ] `--verbose` flag for debug-level logging to stderr
 
 ### Testing
@@ -122,7 +122,7 @@
 - [ ] Architecture doc explaining platform abstraction
 
 ### Packaging & Distribution
-- [ ] GitHub Actions CI workflow (test on Linux + macOS)
+- [x] GitHub Actions CI workflow (test on Linux + macOS)
 - [ ] Release workflow with prebuilt binaries
 - [ ] Homebrew formula
 - [ ] AUR package
@@ -138,8 +138,8 @@
 ---
 
 ## Known Issues
-1. `opn watch` remains unimplemented (feature-gated stub)
-2. `--filter-pid` flag name is awkward (workaround for clap conflict with `pid` subcommand positional arg)
-3. Dead code warnings for Linux-only `net.rs` functions when building on macOS
-4. `list_open_files` may still show `fd:N` placeholder when vnode metadata lookup fails
-5. No structured JSON error payloads yet (errors are plain stderr text)
+1. `watch` supports sockets only; watch-by-port/file and interval configuration are not implemented
+2. `--filter-pid` is retained as an alias for compatibility; canonical flag is `--pid`
+3. vnode path lookup may still fail for some FDs and returns `<path unavailable>`
+4. JSON errors have categories/codes but no stable versioned schema contract yet
+5. Socket list output is not yet sorted by a user-selectable CLI sort flag

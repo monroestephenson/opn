@@ -1,5 +1,5 @@
-/// Integration tests for the `opn` CLI binary.
-/// These tests invoke the compiled binary and verify output behavior.
+//! Integration tests for the `opn` CLI binary.
+//! These tests invoke the compiled binary and verify output behavior.
 
 use std::fs;
 use std::io::Write;
@@ -208,6 +208,22 @@ fn test_pid_nonexistent_returns_error() {
         "Expected not-found message, got: {}",
         stderr
     );
+    assert_eq!(output.status.code(), Some(2));
+}
+
+#[test]
+fn test_json_error_payload_for_failures() {
+    let output = opn_cmd()
+        .args(["pid", "4294967295", "--json"])
+        .output()
+        .expect("failed to run opn");
+    assert_eq!(output.status.code(), Some(2));
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let parsed: serde_json::Value = serde_json::from_str(stdout.trim()).expect("invalid JSON");
+    let err = parsed.get("error").expect("missing error object");
+    assert!(err.get("code").and_then(|v| v.as_str()).is_some());
+    assert!(err.get("category").and_then(|v| v.as_str()).is_some());
+    assert!(err.get("message").and_then(|v| v.as_str()).is_some());
 }
 
 #[test]
@@ -259,8 +275,9 @@ fn test_watch_without_feature_returns_error() {
     assert!(!output.status.success());
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
-        stderr.contains("watch") && stderr.contains("feature"),
-        "Expected feature-gate message, got: {}",
+        (stderr.contains("watch") && stderr.contains("feature"))
+            || stderr.contains("failed to enable raw mode"),
+        "Expected feature-gate or terminal-environment error, got: {}",
         stderr
     );
 }
@@ -297,6 +314,7 @@ fn test_port_no_listener_json_empty_array() {
     let parsed: serde_json::Value = serde_json::from_str(stdout.trim()).expect("invalid JSON");
     assert!(parsed.is_array());
     assert_eq!(parsed.as_array().unwrap().len(), 0);
+    assert_eq!(output.status.code(), Some(1));
 }
 
 #[test]
@@ -437,7 +455,7 @@ fn test_json_flag_after_subcommand() {
 #[test]
 fn test_filter_pid_flag() {
     let output = opn_cmd()
-        .args(["port", "19", "--filter-pid", "1"])
+        .args(["port", "19", "--pid", "1"])
         .output()
         .expect("failed to run opn");
     assert_non_error_exit(&output);
@@ -1044,6 +1062,34 @@ fn test_e2e_sockets_lists_own_tcp_listener() {
     );
 
     drop(listener);
+}
+
+#[test]
+fn test_e2e_sockets_state_filter_listen() {
+    let Some(listener) = bind_tcp_local() else {
+        return;
+    };
+    let port = listener.local_addr().unwrap().port();
+    let my_pid = std::process::id();
+
+    let output = opn_cmd()
+        .args(["sockets", "--state", "LISTEN", "--json"])
+        .output()
+        .expect("failed to run opn");
+    assert_non_error_exit(&output);
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let parsed: serde_json::Value = serde_json::from_str(stdout.trim()).expect("invalid JSON");
+    let arr = parsed.as_array().expect("expected array");
+    let found = arr.iter().any(|entry| {
+        entry["state"].as_str() == Some("LISTEN")
+            && entry["process"]["pid"].as_u64() == Some(my_pid as u64)
+            && entry["local_addr"]
+                .as_str()
+                .map(|a| a.ends_with(&format!(":{}", port)))
+                .unwrap_or(false)
+    });
+    assert!(found, "Expected LISTEN sockets entry for our listener. Output={}", stdout);
 }
 
 // ============================================================

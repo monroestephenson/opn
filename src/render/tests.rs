@@ -1,6 +1,7 @@
-/// Tests for render modules: table formatting, JSON output, and Tabular impls.
+//! Tests for render modules: table formatting, JSON output, and Tabular impls.
 
 #[cfg(test)]
+#[allow(clippy::module_inception)]
 mod tests {
     use crate::model::*;
     use crate::render::table::{format_table, Tabular};

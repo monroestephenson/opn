@@ -75,8 +75,12 @@ pub struct FilterArgs {
     #[arg(long, short = 'p')]
     pub process: Option<String>,
 
+    /// Filter by socket state (e.g. LISTEN, ESTABLISHED)
+    #[arg(long)]
+    pub state: Option<String>,
+
     /// Filter by PID
-    #[arg(long = "filter-pid")]
+    #[arg(long = "pid", visible_alias = "filter-pid")]
     pub filter_pid: Option<u32>,
 
     /// Show only TCP sockets
@@ -102,6 +106,7 @@ impl From<&FilterArgs> for QueryFilter {
             pid: args.filter_pid,
             user: args.user.clone(),
             process_name: args.process.clone(),
+            state: args.state.clone(),
             tcp: args.tcp,
             udp: args.udp,
             ipv4: args.ipv4,
@@ -125,6 +130,7 @@ mod tests {
             all: true,
             user: Some("root".to_string()),
             process: Some("sshd".to_string()),
+            state: Some("LISTEN".to_string()),
             filter_pid: Some(1234),
             tcp: true,
             udp: false,
@@ -135,6 +141,7 @@ mod tests {
         assert_eq!(filter.pid, Some(1234));
         assert_eq!(filter.user.as_deref(), Some("root"));
         assert_eq!(filter.process_name.as_deref(), Some("sshd"));
+        assert_eq!(filter.state.as_deref(), Some("LISTEN"));
         assert!(filter.tcp);
         assert!(!filter.udp);
         assert!(filter.ipv4);
@@ -148,6 +155,7 @@ mod tests {
             all: false,
             user: None,
             process: None,
+            state: None,
             filter_pid: None,
             tcp: false,
             udp: false,
@@ -171,6 +179,7 @@ mod tests {
             all: false,
             user: None,
             process: None,
+            state: None,
             filter_pid: None,
             tcp: true,
             udp: false,
@@ -188,6 +197,7 @@ mod tests {
             all: false,
             user: None,
             process: None,
+            state: None,
             filter_pid: None,
             tcp: false,
             udp: true,
@@ -205,6 +215,7 @@ mod tests {
             all: false,
             user: None,
             process: None,
+            state: None,
             filter_pid: None,
             tcp: true,
             udp: true,
@@ -222,6 +233,7 @@ mod tests {
             all: false,
             user: None,
             process: None,
+            state: None,
             filter_pid: None,
             tcp: false,
             udp: false,
@@ -239,6 +251,7 @@ mod tests {
             all: false,
             user: None,
             process: None,
+            state: None,
             filter_pid: None,
             tcp: false,
             udp: false,
@@ -256,6 +269,7 @@ mod tests {
             all: false,
             user: Some("testuser".to_string()),
             process: None,
+            state: None,
             filter_pid: None,
             tcp: false,
             udp: false,
@@ -275,6 +289,7 @@ mod tests {
             all: false,
             user: None,
             process: Some("nginx".to_string()),
+            state: None,
             filter_pid: None,
             tcp: false,
             udp: false,
@@ -457,6 +472,15 @@ mod tests {
     #[test]
     fn test_cli_parse_filter_pid_flag() {
         let cli = Cli::try_parse_from(["opn", "port", "80", "--filter-pid", "42"]).unwrap();
+        match cli.command {
+            Command::Port { filter, .. } => assert_eq!(filter.filter_pid, Some(42)),
+            _ => panic!("Expected Port command"),
+        }
+    }
+
+    #[test]
+    fn test_cli_parse_pid_flag() {
+        let cli = Cli::try_parse_from(["opn", "port", "80", "--pid", "42"]).unwrap();
         match cli.command {
             Command::Port { filter, .. } => assert_eq!(filter.filter_pid, Some(42)),
             _ => panic!("Expected Port command"),

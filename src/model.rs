@@ -72,6 +72,7 @@ pub struct QueryFilter {
     pub pid: Option<u32>,
     pub user: Option<String>,
     pub process_name: Option<String>,
+    pub state: Option<String>,
     pub tcp: bool,
     pub udp: bool,
     pub ipv4: bool,

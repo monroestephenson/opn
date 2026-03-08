@@ -1,4 +1,4 @@
-/// Shared helpers for network-related parsing (primarily used by the Linux platform).
+//! Shared helpers for network-related parsing (primarily used by the Linux platform).
 
 use std::net::{Ipv4Addr, Ipv6Addr};
 

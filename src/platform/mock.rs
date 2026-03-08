@@ -1,4 +1,4 @@
-/// Mock Platform for testing command logic without OS dependencies.
+//! Mock Platform for testing command logic without OS dependencies.
 
 use anyhow::{bail, Result};
 

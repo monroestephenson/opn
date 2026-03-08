@@ -50,6 +50,8 @@ opn port 80 --tcp          # TCP only
 opn port 53 --udp          # UDP only
 opn port 443 --ipv4        # IPv4 only
 opn port 443 --ipv6        # IPv6 only
+opn sockets --state LISTEN # Socket state filter
+opn port 8080 --pid 1234   # Filter by PID (`--filter-pid` alias still works)
 ```
 
 ### Other commands
@@ -58,7 +60,7 @@ opn port 443 --ipv6        # IPv6 only
 opn pid 1234               # Show open files for a PID
 opn deleted                # Find deleted-but-open files
 opn sockets                # List all open sockets
-opn watch                  # Requires --features watch (still not implemented)
+opn watch                  # Requires --features watch (interactive terminal mode)
 ```
 
 ## How This Differs from lsof
@@ -85,6 +87,6 @@ opn watch                  # Requires --features watch (still not implemented)
 ## Known Limitations
 
 - Requires appropriate permissions to inspect other users' processes (run with `sudo` for full visibility)
-- `watch` subcommand is still a stub
+- `watch` currently monitors sockets with basic interactive controls (`q` quit, `space` pause, `s` sort)
 - Some e2e tests rely on local socket bind permissions and may skip in restricted environments
 - Race conditions with short-lived processes are handled by skipping vanished PIDs

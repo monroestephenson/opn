@@ -43,6 +43,10 @@ impl LinuxPlatform {
         Some(comm.trim().to_string())
     }
 
+    fn current_uid() -> u32 {
+        unsafe { libc::geteuid() }
+    }
+
     fn classify_fd_target(target: &str) -> FdType {
         if target.starts_with("socket:[") {
             FdType::Socket
@@ -190,6 +194,11 @@ impl LinuxPlatform {
                 if !seen.insert((pid, inode)) {
                     continue;
                 }
+                if let Some(state) = &filter.state {
+                    if !net_entry.state.eq_ignore_ascii_case(state) {
+                        continue;
+                    }
+                }
 
                 results.push(SocketEntry {
                     protocol: net_entry.protocol.clone(),
@@ -217,6 +226,15 @@ impl Platform for LinuxPlatform {
                 if let Ok(pid) = name.parse::<u32>() {
                     if let Some(filter_pid) = filter.pid {
                         if pid != filter_pid {
+                            continue;
+                        }
+                    }
+                    if !filter.all && filter.user.is_none() {
+                        let uid = match Self::read_proc_uid(pid) {
+                            Some(v) => v,
+                            None => continue,
+                        };
+                        if uid != Self::current_uid() {
                             continue;
                         }
                     }

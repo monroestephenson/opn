@@ -88,6 +88,7 @@ extern "C" {
 struct VnodeFdInfo {
     path: String,
     nlink: u16,
+    mode: u16,
 }
 
 fn parse_c_char_buf(buf: &[libc::c_char]) -> Option<String> {
@@ -118,6 +119,7 @@ fn get_vnode_fd_info(pid: i32, fd: i32) -> Option<VnodeFdInfo> {
         Some(VnodeFdInfo {
             path,
             nlink: info.pvip.vip_vi.vi_stat.vst_nlink,
+            mode: info.pvip.vip_vi.vi_stat.vst_mode,
         })
     }
 }
@@ -159,6 +161,21 @@ impl MacOsPlatform {
             }
         }
         true
+    }
+
+    fn current_uid() -> u32 {
+        unsafe { libc::geteuid() }
+    }
+
+    fn classify_vnode_mode(mode: u16) -> FdType {
+        let file_type = (mode as libc::mode_t) & libc::S_IFMT;
+        if file_type == libc::S_IFDIR {
+            FdType::Directory
+        } else if file_type == libc::S_IFCHR || file_type == libc::S_IFBLK {
+            FdType::Device
+        } else {
+            FdType::RegularFile
+        }
     }
 
     fn collect_sockets(&self, filter: &QueryFilter, port_filter: Option<u16>) -> Result<Vec<SocketEntry>> {
@@ -215,6 +232,11 @@ impl MacOsPlatform {
                     continue;
                 }
             }
+            if let Some(state_filter) = &filter.state {
+                if !state.eq_ignore_ascii_case(state_filter) {
+                    continue;
+                }
+            }
 
             for pid_info in &socket.associated_pids {
                 let process = self.process_info(*pid_info).unwrap_or(ProcessInfo {
@@ -244,11 +266,20 @@ impl MacOsPlatform {
 
 impl Platform for MacOsPlatform {
     fn list_pids(&self, filter: &QueryFilter) -> Result<Vec<u32>> {
+        use libproc::proc_pid;
         use libproc::processes::{pids_by_type, ProcFilter};
         let mut pids = pids_by_type(ProcFilter::All)
             .context("Failed to enumerate processes")?;
         if let Some(pid) = filter.pid {
             pids.retain(|p| *p == pid);
+        }
+        if !filter.all && filter.user.is_none() {
+            let uid = Self::current_uid();
+            pids.retain(|p| {
+                proc_pid::pidinfo::<libproc::bsd_info::BSDInfo>(*p as i32, 0)
+                    .map(|info| info.pbi_uid == uid)
+                    .unwrap_or(false)
+            });
         }
         Ok(pids)
     }
@@ -291,10 +322,10 @@ impl Platform for MacOsPlatform {
 
         let mut results = Vec::new();
         for fd_info in &fd_list {
-            let fd = fd_info.proc_fd as i32;
+            let fd = fd_info.proc_fd;
             let fd_type_val = fd_info.proc_fdtype;
 
-            let fd_type = if fd_type_val == ProcFDType::VNode as u32 {
+            let mut fd_type = if fd_type_val == ProcFDType::VNode as u32 {
                 FdType::RegularFile
             } else if fd_type_val == ProcFDType::Socket as u32 {
                 FdType::Socket
@@ -311,9 +342,10 @@ impl Platform for MacOsPlatform {
                 if let Some(vnode_info) = get_vnode_fd_info(pid as i32, fd) {
                     // st_nlink == 0 is the canonical signal for unlinked-but-open files.
                     deleted = vnode_info.nlink == 0;
+                    fd_type = Self::classify_vnode_mode(vnode_info.mode);
                     path = vnode_info.path;
                 } else {
-                    path = format!("fd:{}", fd);
+                    path = String::from("<path unavailable>");
                 }
             }
 
@@ -387,7 +419,7 @@ impl Platform for MacOsPlatform {
                     if fd_info.proc_fdtype != ProcFDType::VNode as u32 {
                         continue;
                     }
-                    if let Some(vnode_info) = get_vnode_fd_info(pid as i32, fd_info.proc_fd as i32) {
+                    if let Some(vnode_info) = get_vnode_fd_info(pid as i32, fd_info.proc_fd) {
                         let matches_path = if let Ok(vnode_canonical) = std::fs::canonicalize(&vnode_info.path) {
                             vnode_canonical.to_string_lossy() == canonical_str
                         } else {
@@ -397,7 +429,7 @@ impl Platform for MacOsPlatform {
                         if matches_path {
                             matches.push(OpenFile {
                                 process: process.clone(),
-                                fd: fd_info.proc_fd as i32,
+                                fd: fd_info.proc_fd,
                                 fd_type: FdType::RegularFile,
                                 path: vnode_info.path,
                                 deleted: vnode_info.nlink == 0,
@@ -453,11 +485,11 @@ impl Platform for MacOsPlatform {
                     if fd_info.proc_fdtype != ProcFDType::VNode as u32 {
                         continue;
                     }
-                    if let Some(vnode_info) = get_vnode_fd_info(pid as i32, fd_info.proc_fd as i32) {
+                    if let Some(vnode_info) = get_vnode_fd_info(pid as i32, fd_info.proc_fd) {
                         if vnode_info.nlink == 0 {
                             deleted_files.push(OpenFile {
                                 process: process.clone(),
-                                fd: fd_info.proc_fd as i32,
+                                fd: fd_info.proc_fd,
                                 fd_type: FdType::RegularFile,
                                 path: vnode_info.path,
                                 deleted: true,

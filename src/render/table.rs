@@ -4,6 +4,7 @@ pub trait Tabular {
 }
 
 /// Format items into a table string (for testing and capture).
+#[cfg(test)]
 pub fn format_table<T: Tabular>(items: &[T]) -> String {
     if items.is_empty() {
         return String::new();
