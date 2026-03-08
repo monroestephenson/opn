@@ -1,5 +1,5 @@
-pub mod table;
 pub mod json;
+pub mod table;
 #[cfg(test)]
 mod tests;
 

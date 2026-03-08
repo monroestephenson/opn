@@ -68,7 +68,10 @@ fn test_help_flag() {
 
 #[test]
 fn test_version_flag() {
-    let output = opn_cmd().arg("--version").output().expect("failed to run opn");
+    let output = opn_cmd()
+        .arg("--version")
+        .output()
+        .expect("failed to run opn");
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(stdout.contains("opn"));
 }
@@ -338,10 +341,12 @@ fn test_port_with_tcp_filter() {
         .output()
         .expect("failed to run opn");
     // Should succeed regardless of results
-    assert!(output.status.success() || {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        stderr.contains("No results")
-    });
+    assert!(
+        output.status.success() || {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            stderr.contains("No results")
+        }
+    );
 }
 
 #[test]
@@ -350,10 +355,12 @@ fn test_port_with_udp_filter() {
         .args(["port", "19", "--udp"])
         .output()
         .expect("failed to run opn");
-    assert!(output.status.success() || {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        stderr.contains("No results")
-    });
+    assert!(
+        output.status.success() || {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            stderr.contains("No results")
+        }
+    );
 }
 
 #[test]
@@ -644,7 +651,8 @@ fn test_e2e_tcp_listener_table_output() {
     assert!(
         stdout.contains(&port.to_string()),
         "Expected port {} in table output: {}",
-        port, stdout
+        port,
+        stdout
     );
 
     drop(listener);
@@ -712,7 +720,8 @@ fn test_e2e_tcp_listener_closed_port_not_found() {
     assert!(
         parsed.as_array().unwrap().is_empty(),
         "Closed port {} should have no listeners. Got: {}",
-        port, stdout
+        port,
+        stdout
     );
 }
 
@@ -843,12 +852,8 @@ fn test_e2e_tcp_and_udp_same_port() {
         stdout
     );
 
-    let has_tcp = arr
-        .iter()
-        .any(|e| e["protocol"].as_str() == Some("Tcp"));
-    let has_udp = arr
-        .iter()
-        .any(|e| e["protocol"].as_str() == Some("Udp"));
+    let has_tcp = arr.iter().any(|e| e["protocol"].as_str() == Some("Tcp"));
+    let has_udp = arr.iter().any(|e| e["protocol"].as_str() == Some("Udp"));
     assert!(has_tcp, "Expected TCP entry for port {}", port);
     assert!(has_udp, "Expected UDP entry for port {}", port);
 
@@ -1010,7 +1015,10 @@ fn test_e2e_multiple_tcp_listeners_different_ports() {
         .as_str()
         .unwrap()
         .to_string();
-    assert_ne!(addr1, addr2, "Different ports should produce different local_addr values");
+    assert_ne!(
+        addr1, addr2,
+        "Different ports should produce different local_addr values"
+    );
 
     drop(listener1);
     drop(listener2);
@@ -1056,9 +1064,7 @@ fn test_e2e_sockets_lists_own_tcp_listener() {
     assert!(
         found,
         "Expected sockets list to include our listener pid={} port={}. Output={}",
-        my_pid,
-        port,
-        stdout
+        my_pid, port, stdout
     );
 
     drop(listener);
@@ -1089,7 +1095,11 @@ fn test_e2e_sockets_state_filter_listen() {
                 .map(|a| a.ends_with(&format!(":{}", port)))
                 .unwrap_or(false)
     });
-    assert!(found, "Expected LISTEN sockets entry for our listener. Output={}", stdout);
+    assert!(
+        found,
+        "Expected LISTEN sockets entry for our listener. Output={}",
+        stdout
+    );
 }
 
 // ============================================================
@@ -1172,7 +1182,8 @@ fn test_e2e_pid_with_user_filter() {
     assert!(
         !arr.is_empty(),
         "Filtering by our own username '{}' should return results for PID {}",
-        username, my_pid
+        username,
+        my_pid
     );
 
     // With a bogus username, should return empty
@@ -1192,7 +1203,8 @@ fn test_e2e_pid_with_user_filter() {
     assert!(
         parsed_bogus.as_array().unwrap().is_empty(),
         "Bogus user filter should return empty for PID {}. Got: {}",
-        my_pid, stdout_bogus
+        my_pid,
+        stdout_bogus
     );
 }
 
@@ -1218,8 +1230,8 @@ fn test_e2e_file_finds_running_executable() {
         .to_string();
 
     // Canonicalize to resolve symlinks (e.g., /bin -> /usr/bin on macOS)
-    let canonical_path = fs::canonicalize(&sleep_path)
-        .unwrap_or_else(|_| std::path::PathBuf::from(&sleep_path));
+    let canonical_path =
+        fs::canonicalize(&sleep_path).unwrap_or_else(|_| std::path::PathBuf::from(&sleep_path));
 
     let output = opn_cmd()
         .args(["file", canonical_path.to_str().unwrap(), "--json"])
@@ -1231,8 +1243,7 @@ fn test_e2e_file_finds_running_executable() {
 
     // On macOS, file lookup matches process executables
     if output.status.success() && !stdout.trim().is_empty() {
-        let parsed: serde_json::Value =
-            serde_json::from_str(stdout.trim()).expect("invalid JSON");
+        let parsed: serde_json::Value = serde_json::from_str(stdout.trim()).expect("invalid JSON");
         let arr = parsed.as_array().unwrap();
 
         // Should find at least the sleep process we spawned
@@ -1278,8 +1289,8 @@ fn test_e2e_file_table_output() {
     let sleep_path = String::from_utf8_lossy(&sleep_path_output.stdout)
         .trim()
         .to_string();
-    let canonical_path = fs::canonicalize(&sleep_path)
-        .unwrap_or_else(|_| std::path::PathBuf::from(&sleep_path));
+    let canonical_path =
+        fs::canonicalize(&sleep_path).unwrap_or_else(|_| std::path::PathBuf::from(&sleep_path));
 
     let output = opn_cmd()
         .args(["file", canonical_path.to_str().unwrap()])
@@ -1321,8 +1332,8 @@ fn test_e2e_file_json_schema_validation() {
     let sleep_path = String::from_utf8_lossy(&sleep_path_output.stdout)
         .trim()
         .to_string();
-    let canonical_path = fs::canonicalize(&sleep_path)
-        .unwrap_or_else(|_| std::path::PathBuf::from(&sleep_path));
+    let canonical_path =
+        fs::canonicalize(&sleep_path).unwrap_or_else(|_| std::path::PathBuf::from(&sleep_path));
 
     let output = opn_cmd()
         .args(["file", canonical_path.to_str().unwrap(), "--json"])
@@ -1331,8 +1342,7 @@ fn test_e2e_file_json_schema_validation() {
 
     let stdout = String::from_utf8_lossy(&output.stdout);
     if !stdout.trim().is_empty() && stdout.trim() != "[]" {
-        let parsed: serde_json::Value =
-            serde_json::from_str(stdout.trim()).expect("invalid JSON");
+        let parsed: serde_json::Value = serde_json::from_str(stdout.trim()).expect("invalid JSON");
         let arr = parsed.as_array().unwrap();
 
         for entry in arr {
@@ -1341,18 +1351,9 @@ fn test_e2e_file_json_schema_validation() {
             assert!(entry["path"].is_string(), "Missing path field");
             assert!(entry["deleted"].is_boolean(), "Missing deleted field");
             assert!(entry["process"].is_object(), "Missing process object");
-            assert!(
-                entry["process"]["pid"].is_number(),
-                "Missing process.pid"
-            );
-            assert!(
-                entry["process"]["name"].is_string(),
-                "Missing process.name"
-            );
-            assert!(
-                entry["process"]["user"].is_string(),
-                "Missing process.user"
-            );
+            assert!(entry["process"]["pid"].is_number(), "Missing process.pid");
+            assert!(entry["process"]["name"].is_string(), "Missing process.name");
+            assert!(entry["process"]["user"].is_string(), "Missing process.user");
         }
     }
 
@@ -1376,8 +1377,8 @@ fn test_e2e_file_killed_process_not_found() {
     let sleep_path = String::from_utf8_lossy(&sleep_path_output.stdout)
         .trim()
         .to_string();
-    let canonical_path = fs::canonicalize(&sleep_path)
-        .unwrap_or_else(|_| std::path::PathBuf::from(&sleep_path));
+    let canonical_path =
+        fs::canonicalize(&sleep_path).unwrap_or_else(|_| std::path::PathBuf::from(&sleep_path));
 
     // Kill the child first
     child.kill().ok();
@@ -1391,8 +1392,7 @@ fn test_e2e_file_killed_process_not_found() {
 
     let stdout = String::from_utf8_lossy(&output.stdout);
     if !stdout.trim().is_empty() && stdout.trim() != "[]" {
-        let parsed: serde_json::Value =
-            serde_json::from_str(stdout.trim()).expect("invalid JSON");
+        let parsed: serde_json::Value = serde_json::from_str(stdout.trim()).expect("invalid JSON");
         let arr = parsed.as_array().unwrap();
         // The killed child should NOT be in results
         let found_dead_child = arr.iter().any(|entry| {
@@ -1436,9 +1436,11 @@ fn test_e2e_deleted_with_open_deleted_file() {
 
     if output.status.success() {
         let stdout = String::from_utf8_lossy(&output.stdout);
-        let parsed: serde_json::Value =
-            serde_json::from_str(stdout.trim()).expect("invalid JSON");
-        assert!(parsed.is_array(), "Expected JSON array from deleted command");
+        let parsed: serde_json::Value = serde_json::from_str(stdout.trim()).expect("invalid JSON");
+        assert!(
+            parsed.is_array(),
+            "Expected JSON array from deleted command"
+        );
 
         // On Linux, this should find the deleted file held open by our process
         // On macOS, find_deleted may not be implemented yet
@@ -1447,7 +1449,10 @@ fn test_e2e_deleted_with_open_deleted_file() {
             // Validate schema of any results
             for entry in arr {
                 assert!(entry["fd"].is_number(), "Missing fd");
-                assert!(entry["deleted"].as_bool() == Some(true), "deleted should be true");
+                assert!(
+                    entry["deleted"].as_bool() == Some(true),
+                    "deleted should be true"
+                );
                 assert!(entry["process"].is_object(), "Missing process");
             }
         }
@@ -1494,8 +1499,7 @@ fn test_e2e_deleted_with_user_filter() {
 
     if output.status.success() {
         let stdout = String::from_utf8_lossy(&output.stdout);
-        let parsed: serde_json::Value =
-            serde_json::from_str(stdout.trim()).expect("invalid JSON");
+        let parsed: serde_json::Value = serde_json::from_str(stdout.trim()).expect("invalid JSON");
         let arr = parsed.as_array().unwrap();
         // All results should belong to our user
         for entry in arr {
@@ -1579,13 +1583,8 @@ fn test_e2e_port_shows_correct_process_name() {
     });
     assert!(our_entry.is_some(), "Should find our PID in results");
 
-    let process_name = our_entry.unwrap()["process"]["name"]
-        .as_str()
-        .unwrap_or("");
-    assert!(
-        !process_name.is_empty(),
-        "Process name should not be empty"
-    );
+    let process_name = our_entry.unwrap()["process"]["name"].as_str().unwrap_or("");
+    assert!(!process_name.is_empty(), "Process name should not be empty");
     // The process name should be a real name, not <unknown>
     assert!(
         process_name != "<unknown>",
@@ -1604,7 +1603,8 @@ fn test_e2e_port_shows_correct_process_name() {
 fn test_macos_vnode_path_resolution_for_pid() {
     let tmp_path = format!("/tmp/opn_macos_vnode_path_{}", std::process::id());
     let mut f = fs::File::create(&tmp_path).expect("failed to create temp file");
-    f.write_all(b"macos-vnode-path").expect("failed to write temp file");
+    f.write_all(b"macos-vnode-path")
+        .expect("failed to write temp file");
     let _held = fs::File::open(&tmp_path).expect("failed to reopen temp file");
 
     let output = opn_cmd()
@@ -1626,8 +1626,7 @@ fn test_macos_vnode_path_resolution_for_pid() {
     assert!(
         found,
         "Expected pid output to include vnode path '{}'. Output={}",
-        tmp_path,
-        stdout
+        tmp_path, stdout
     );
 
     drop(_held);
@@ -1659,8 +1658,7 @@ fn test_macos_deleted_detects_unlinked_open_file() {
             .expect("failed to run opn");
         assert_non_error_exit(&output);
         let stdout = String::from_utf8_lossy(&output.stdout);
-        let parsed: serde_json::Value =
-            serde_json::from_str(stdout.trim()).expect("invalid JSON");
+        let parsed: serde_json::Value = serde_json::from_str(stdout.trim()).expect("invalid JSON");
         let arr = parsed.as_array().expect("expected array");
         found = arr.iter().any(|entry| {
             entry["path"]

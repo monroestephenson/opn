@@ -2,8 +2,8 @@ use anyhow::{Context, Result};
 use rayon::prelude::*;
 use std::path::Path;
 
-use crate::model::*;
 use super::Platform;
+use crate::model::*;
 
 // ── Raw FFI for proc_pidfdvnodeinfo (bypasses libproc 0.14 limitation) ──
 
@@ -178,7 +178,11 @@ impl MacOsPlatform {
         }
     }
 
-    fn collect_sockets(&self, filter: &QueryFilter, port_filter: Option<u16>) -> Result<Vec<SocketEntry>> {
+    fn collect_sockets(
+        &self,
+        filter: &QueryFilter,
+        port_filter: Option<u16>,
+    ) -> Result<Vec<SocketEntry>> {
         use netstat2::{
             iterate_sockets_info, AddressFamilyFlags, ProtocolFlags, ProtocolSocketInfo,
         };
@@ -197,8 +201,8 @@ impl MacOsPlatform {
             proto_flags = ProtocolFlags::UDP;
         }
 
-        let sockets = iterate_sockets_info(af_flags, proto_flags)
-            .context("Failed to iterate sockets")?;
+        let sockets =
+            iterate_sockets_info(af_flags, proto_flags).context("Failed to iterate sockets")?;
 
         let mut results = Vec::new();
         for socket_result in sockets {
@@ -268,8 +272,7 @@ impl Platform for MacOsPlatform {
     fn list_pids(&self, filter: &QueryFilter) -> Result<Vec<u32>> {
         use libproc::proc_pid;
         use libproc::processes::{pids_by_type, ProcFilter};
-        let mut pids = pids_by_type(ProcFilter::All)
-            .context("Failed to enumerate processes")?;
+        let mut pids = pids_by_type(ProcFilter::All).context("Failed to enumerate processes")?;
         if let Some(pid) = filter.pid {
             pids.retain(|p| *p == pid);
         }
@@ -287,11 +290,9 @@ impl Platform for MacOsPlatform {
     fn process_info(&self, pid: u32) -> Result<ProcessInfo> {
         use libproc::proc_pid;
 
-        let name = proc_pid::name(pid as i32)
-            .unwrap_or_else(|_| String::from("<unknown>"));
+        let name = proc_pid::name(pid as i32).unwrap_or_else(|_| String::from("<unknown>"));
 
-        let command = proc_pid::pidpath(pid as i32)
-            .unwrap_or_else(|_| name.clone());
+        let command = proc_pid::pidpath(pid as i32).unwrap_or_else(|_| name.clone());
 
         // Get UID from BSDInfo
         let (uid, user) = match proc_pid::pidinfo::<libproc::bsd_info::BSDInfo>(pid as i32, 0) {
@@ -317,8 +318,7 @@ impl Platform for MacOsPlatform {
         use libproc::proc_pid;
 
         let process = self.process_info(pid)?;
-        let fd_list = proc_pid::listpidinfo::<ListFDs>(pid as i32, 256)
-            .unwrap_or_default();
+        let fd_list = proc_pid::listpidinfo::<ListFDs>(pid as i32, 256).unwrap_or_default();
 
         let mut results = Vec::new();
         for fd_info in &fd_list {
@@ -366,17 +366,20 @@ impl Platform for MacOsPlatform {
         use libproc::file_info::{ListFDs, ProcFDType};
         use libproc::proc_pid;
 
-        let canonical = std::fs::canonicalize(path)
-            .unwrap_or_else(|_| Path::new(path).to_path_buf());
+        let canonical =
+            std::fs::canonicalize(path).unwrap_or_else(|_| Path::new(path).to_path_buf());
         let canonical_str = canonical.to_string_lossy().to_string();
 
         let pids = self.list_pids(&QueryFilter::default())?;
 
-        let results: Vec<OpenFile> = pids.par_iter()
+        let results: Vec<OpenFile> = pids
+            .par_iter()
             .flat_map(|&pid| {
                 // Apply filters
                 if let Some(filter_pid) = filter.pid {
-                    if pid != filter_pid { return vec![]; }
+                    if pid != filter_pid {
+                        return vec![];
+                    }
                 }
 
                 let process = match self.process_info(pid) {
@@ -385,17 +388,22 @@ impl Platform for MacOsPlatform {
                 };
 
                 if let Some(ref user) = filter.user {
-                    if &process.user != user { return vec![]; }
+                    if &process.user != user {
+                        return vec![];
+                    }
                 }
                 if let Some(ref name) = filter.process_name {
-                    if &process.name != name { return vec![]; }
+                    if &process.name != name {
+                        return vec![];
+                    }
                 }
 
                 let mut matches = Vec::new();
 
                 // Keep executable-path matching behavior for macOS parity.
                 if let Ok(proc_path) = proc_pid::pidpath(pid as i32) {
-                    let exec_matches = if let Ok(exec_canonical) = std::fs::canonicalize(&proc_path) {
+                    let exec_matches = if let Ok(exec_canonical) = std::fs::canonicalize(&proc_path)
+                    {
                         exec_canonical.to_string_lossy() == canonical_str
                     } else {
                         proc_path == canonical_str
@@ -412,19 +420,19 @@ impl Platform for MacOsPlatform {
                     }
                 }
 
-                let fd_list = proc_pid::listpidinfo::<ListFDs>(pid as i32, 256)
-                    .unwrap_or_default();
+                let fd_list = proc_pid::listpidinfo::<ListFDs>(pid as i32, 256).unwrap_or_default();
 
                 for fd_info in &fd_list {
                     if fd_info.proc_fdtype != ProcFDType::VNode as u32 {
                         continue;
                     }
                     if let Some(vnode_info) = get_vnode_fd_info(pid as i32, fd_info.proc_fd) {
-                        let matches_path = if let Ok(vnode_canonical) = std::fs::canonicalize(&vnode_info.path) {
-                            vnode_canonical.to_string_lossy() == canonical_str
-                        } else {
-                            vnode_info.path == canonical_str
-                        };
+                        let matches_path =
+                            if let Ok(vnode_canonical) = std::fs::canonicalize(&vnode_info.path) {
+                                vnode_canonical.to_string_lossy() == canonical_str
+                            } else {
+                                vnode_info.path == canonical_str
+                            };
 
                         if matches_path {
                             matches.push(OpenFile {
@@ -459,10 +467,13 @@ impl Platform for MacOsPlatform {
 
         let pids = self.list_pids(&QueryFilter::default())?;
 
-        let results: Vec<OpenFile> = pids.par_iter()
+        let results: Vec<OpenFile> = pids
+            .par_iter()
             .flat_map(|&pid| {
                 if let Some(filter_pid) = filter.pid {
-                    if pid != filter_pid { return vec![]; }
+                    if pid != filter_pid {
+                        return vec![];
+                    }
                 }
 
                 let process = match self.process_info(pid) {
@@ -471,14 +482,17 @@ impl Platform for MacOsPlatform {
                 };
 
                 if let Some(ref user) = filter.user {
-                    if &process.user != user { return vec![]; }
+                    if &process.user != user {
+                        return vec![];
+                    }
                 }
                 if let Some(ref name) = filter.process_name {
-                    if &process.name != name { return vec![]; }
+                    if &process.name != name {
+                        return vec![];
+                    }
                 }
 
-                let fd_list = proc_pid::listpidinfo::<ListFDs>(pid as i32, 256)
-                    .unwrap_or_default();
+                let fd_list = proc_pid::listpidinfo::<ListFDs>(pid as i32, 256).unwrap_or_default();
 
                 let mut deleted_files = Vec::new();
                 for fd_info in &fd_list {

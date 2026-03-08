@@ -3,7 +3,11 @@ use clap::{Parser, Subcommand};
 use crate::model::QueryFilter;
 
 #[derive(Parser, Debug)]
-#[command(name = "opn", version, about = "A modern, human-friendly replacement for lsof")]
+#[command(
+    name = "opn",
+    version,
+    about = "A modern, human-friendly replacement for lsof"
+)]
 pub struct Cli {
     #[command(subcommand)]
     pub command: Command,

@@ -146,7 +146,11 @@ pub fn parse_proc_net_udp_line(line: &str) -> Option<ProcNetEntry> {
         e.protocol = Protocol::Udp;
         // UDP states are different — 07 = established, others mostly unused
         // We just show the raw state or simplify
-        e.state = if e.state == "CLOSE" { "UNCONN".to_string() } else { e.state };
+        e.state = if e.state == "CLOSE" {
+            "UNCONN".to_string()
+        } else {
+            e.state
+        };
         e
     })
 }
@@ -155,7 +159,11 @@ pub fn parse_proc_net_udp_line(line: &str) -> Option<ProcNetEntry> {
 pub fn parse_proc_net_udp6_line(line: &str) -> Option<ProcNetEntry> {
     parse_proc_net_tcp6_line(line).map(|mut e| {
         e.protocol = Protocol::Udp;
-        e.state = if e.state == "CLOSE" { "UNCONN".to_string() } else { e.state };
+        e.state = if e.state == "CLOSE" {
+            "UNCONN".to_string()
+        } else {
+            e.state
+        };
         e
     })
 }
@@ -292,10 +300,10 @@ mod tests {
     #[test]
     fn test_parse_hex_port_common_ports() {
         assert_eq!(parse_hex_port("01BB"), Some(443)); // HTTPS
-        assert_eq!(parse_hex_port("0015"), Some(21));  // FTP
-        assert_eq!(parse_hex_port("0019"), Some(25));  // SMTP
+        assert_eq!(parse_hex_port("0015"), Some(21)); // FTP
+        assert_eq!(parse_hex_port("0019"), Some(25)); // SMTP
         assert_eq!(parse_hex_port("006F"), Some(111)); // RPC
-        assert_eq!(parse_hex_port("0035"), Some(53));  // DNS
+        assert_eq!(parse_hex_port("0035"), Some(53)); // DNS
     }
 
     #[test]
@@ -465,7 +473,8 @@ mod tests {
 
     #[test]
     fn test_parse_proc_net_tcp_line_time_wait() {
-        let line = "   2: 0100007F:1F90 0100007F:C001 06 00000000:00000000 00:00000000 00000000  0 0 0 1";
+        let line =
+            "   2: 0100007F:1F90 0100007F:C001 06 00000000:00000000 00:00000000 00000000  0 0 0 1";
         let entry = parse_proc_net_tcp_line(line).unwrap();
         assert_eq!(entry.state, "TIME_WAIT");
         assert_eq!(entry.inode, 0);
@@ -533,7 +542,7 @@ mod tests {
         let entry = parse_proc_net_udp_line(line).unwrap();
         assert_eq!(entry.local_addr, "0.0.0.0");
         assert_eq!(entry.local_port, 53); // DNS
-        // State 07 = CLOSE in TCP, but UDP rewrites CLOSE → UNCONN
+                                          // State 07 = CLOSE in TCP, but UDP rewrites CLOSE → UNCONN
         assert_eq!(entry.state, "UNCONN");
         assert_eq!(entry.inode, 55555);
     }

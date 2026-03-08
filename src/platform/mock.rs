@@ -2,8 +2,8 @@
 
 use anyhow::{bail, Result};
 
-use crate::model::*;
 use super::Platform;
+use crate::model::*;
 
 pub struct MockPlatform {
     pids: Vec<u32>,
@@ -74,11 +74,21 @@ impl Platform for MockPlatform {
     }
 
     fn list_open_files(&self, pid: u32) -> Result<Vec<OpenFile>> {
-        Ok(self.files.iter().filter(|f| f.process.pid == pid).cloned().collect())
+        Ok(self
+            .files
+            .iter()
+            .filter(|f| f.process.pid == pid)
+            .cloned()
+            .collect())
     }
 
     fn find_by_file(&self, path: &str, _filter: &QueryFilter) -> Result<Vec<OpenFile>> {
-        Ok(self.files.iter().filter(|f| f.path == path).cloned().collect())
+        Ok(self
+            .files
+            .iter()
+            .filter(|f| f.path == path)
+            .cloned()
+            .collect())
     }
 
     fn find_by_port(&self, port: u16, _filter: &QueryFilter) -> Result<Vec<SocketEntry>> {

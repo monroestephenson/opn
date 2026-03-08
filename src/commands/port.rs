@@ -3,12 +3,19 @@ use anyhow::Result;
 use crate::model::{QueryFilter, SocketEntry};
 use crate::platform::Platform;
 use crate::render;
-use crate::render::RenderOutcome;
 use crate::render::table::Tabular;
+use crate::render::RenderOutcome;
 
 impl Tabular for SocketEntry {
     fn headers() -> Vec<&'static str> {
-        vec!["PROTO", "LOCAL ADDRESS", "REMOTE ADDRESS", "STATE", "PID", "PROCESS"]
+        vec![
+            "PROTO",
+            "LOCAL ADDRESS",
+            "REMOTE ADDRESS",
+            "STATE",
+            "PID",
+            "PROCESS",
+        ]
     }
 
     fn row(&self) -> Vec<String> {

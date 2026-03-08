@@ -23,7 +23,17 @@ mod tests {
     #[test]
     fn test_socket_entry_headers() {
         let headers = SocketEntry::headers();
-        assert_eq!(headers, vec!["PROTO", "LOCAL ADDRESS", "REMOTE ADDRESS", "STATE", "PID", "PROCESS"]);
+        assert_eq!(
+            headers,
+            vec![
+                "PROTO",
+                "LOCAL ADDRESS",
+                "REMOTE ADDRESS",
+                "STATE",
+                "PID",
+                "PROCESS"
+            ]
+        );
     }
 
     #[test]
@@ -65,7 +75,10 @@ mod tests {
     #[test]
     fn test_open_file_headers() {
         let headers = OpenFile::headers();
-        assert_eq!(headers, vec!["PID", "PROCESS", "USER", "FD", "TYPE", "PATH"]);
+        assert_eq!(
+            headers,
+            vec!["PID", "PROCESS", "USER", "FD", "TYPE", "PATH"]
+        );
     }
 
     #[test]
@@ -206,7 +219,10 @@ mod tests {
         ];
         let output = format_table(&items);
         let lines: Vec<&str> = output.lines().collect();
-        assert!(lines.len() >= 4, "Should have header + separator + 2 data rows");
+        assert!(
+            lines.len() >= 4,
+            "Should have header + separator + 2 data rows"
+        );
         // Verify separator is all dashes and spaces
         assert!(lines[1].chars().all(|c| c == '-' || c == ' '));
         // Verify header contains expected columns

@@ -1,5 +1,5 @@
-pub mod port;
+pub mod deleted;
 pub mod file;
 pub mod pid;
-pub mod deleted;
+pub mod port;
 pub mod sockets;

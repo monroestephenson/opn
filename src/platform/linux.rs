@@ -1,13 +1,13 @@
 use anyhow::{Context, Result};
 use rayon::prelude::*;
-use std::collections::HashSet;
 use std::collections::HashMap;
+use std::collections::HashSet;
 use std::fs;
 use std::path::{Path, PathBuf};
 
+use super::Platform;
 use crate::model::*;
 use crate::net;
-use super::Platform;
 
 pub struct LinuxPlatform;
 
@@ -62,7 +62,10 @@ impl LinuxPlatform {
     }
 
     /// Build a mapping of inode -> (local_addr, local_port, remote_addr, remote_port, state, protocol)
-    fn build_inode_socket_map(port_filter: Option<u16>, filter: &QueryFilter) -> HashMap<u64, net::ProcNetEntry> {
+    fn build_inode_socket_map(
+        port_filter: Option<u16>,
+        filter: &QueryFilter,
+    ) -> HashMap<u64, net::ProcNetEntry> {
         let mut map = HashMap::new();
 
         let should_tcp = !filter.udp || filter.tcp || (!filter.tcp && !filter.udp);
@@ -149,7 +152,11 @@ impl LinuxPlatform {
         true
     }
 
-    fn collect_sockets(&self, port_filter: Option<u16>, filter: &QueryFilter) -> Result<Vec<SocketEntry>> {
+    fn collect_sockets(
+        &self,
+        port_filter: Option<u16>,
+        filter: &QueryFilter,
+    ) -> Result<Vec<SocketEntry>> {
         let inode_map = Self::build_inode_socket_map(port_filter, filter);
         if inode_map.is_empty() {
             return Ok(Vec::new());
@@ -284,7 +291,11 @@ impl Platform for LinuxPlatform {
             name,
             user,
             uid,
-            command: if command.is_empty() { name.clone() } else { command },
+            command: if command.is_empty() {
+                name.clone()
+            } else {
+                command
+            },
         })
     }
 
@@ -293,8 +304,8 @@ impl Platform for LinuxPlatform {
         let process = self.process_info(pid)?;
         let mut results = Vec::new();
 
-        let entries = fs::read_dir(&fd_dir)
-            .with_context(|| format!("Failed to read {}", fd_dir))?;
+        let entries =
+            fs::read_dir(&fd_dir).with_context(|| format!("Failed to read {}", fd_dir))?;
 
         for entry in entries {
             let entry = match entry {
@@ -335,16 +346,14 @@ impl Platform for LinuxPlatform {
     }
 
     fn find_by_file(&self, path: &str, filter: &QueryFilter) -> Result<Vec<OpenFile>> {
-        let canonical = fs::canonicalize(path)
-            .unwrap_or_else(|_| PathBuf::from(path));
+        let canonical = fs::canonicalize(path).unwrap_or_else(|_| PathBuf::from(path));
         let canonical_str = canonical.to_string_lossy().to_string();
 
         let pids = self.list_pids(filter)?;
 
-        let results: Vec<OpenFile> = pids.par_iter()
-            .filter_map(|&pid| {
-                self.list_open_files(pid).ok()
-            })
+        let results: Vec<OpenFile> = pids
+            .par_iter()
+            .filter_map(|&pid| self.list_open_files(pid).ok())
             .flatten()
             .filter(|f| {
                 if let Ok(p) = fs::canonicalize(&f.path) {

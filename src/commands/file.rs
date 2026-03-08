@@ -3,8 +3,8 @@ use anyhow::Result;
 use crate::model::{OpenFile, QueryFilter};
 use crate::platform::Platform;
 use crate::render;
-use crate::render::RenderOutcome;
 use crate::render::table::Tabular;
+use crate::render::RenderOutcome;
 
 impl Tabular for OpenFile {
     fn headers() -> Vec<&'static str> {
