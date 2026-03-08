@@ -18,6 +18,17 @@ fn assert_non_error_exit(output: &Output) {
     );
 }
 
+fn assert_error_exit(output: &Output) {
+    let code = output.status.code().unwrap_or(-1);
+    assert_eq!(
+        code,
+        2,
+        "expected exit code 2, got {} stderr={}",
+        code,
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
 fn parse_llm_stdout(output: &Output) -> Value {
     let stdout = String::from_utf8_lossy(&output.stdout);
     serde_json::from_str(stdout.trim()).unwrap_or_else(|e| {
@@ -187,4 +198,44 @@ fn test_llm_capture_success_or_graceful_failure_shape() {
             "capture failure should include warnings array: {val}"
         );
     }
+}
+
+#[test]
+fn test_llm_write_guard_uses_agent_error_envelope() {
+    let output = opn_cmd()
+        .args(["--llm", "kill", "1"])
+        .output()
+        .expect("failed to run opn --llm kill 1");
+    assert_error_exit(&output);
+    let val = parse_llm_stdout(&output);
+    assert_agent_envelope(&val);
+    assert_eq!(val["ok"], false);
+    assert!(
+        val["data"]["error"].is_object(),
+        "expected structured error object in data.error: {val}"
+    );
+    assert!(
+        val["warnings"].is_array(),
+        "expected warnings array in llm error envelope: {val}"
+    );
+}
+
+#[test]
+fn test_llm_runtime_error_uses_agent_error_envelope() {
+    let output = opn_cmd()
+        .args(["--llm", "diff", "/definitely/not/a/snapshot.json"])
+        .output()
+        .expect("failed to run opn --llm diff");
+    assert_error_exit(&output);
+    let val = parse_llm_stdout(&output);
+    assert_agent_envelope(&val);
+    assert_eq!(val["ok"], false);
+    assert!(
+        val["data"]["error"].is_object(),
+        "expected structured error object in data.error: {val}"
+    );
+    assert!(
+        val["warnings"].is_array(),
+        "expected warnings array in llm error envelope: {val}"
+    );
 }

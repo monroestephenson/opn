@@ -139,13 +139,49 @@ fn classify_error(message: &str) -> JsonError {
     }
 }
 
-fn write_guard_error(llm: bool) -> ExitCode {
+fn command_label(command: &Command) -> String {
+    match command {
+        Command::Port { port, .. } => format!("port {port}"),
+        Command::File { path, .. } => format!("file {path}"),
+        Command::Pid { pid, .. } => format!("pid {pid}"),
+        Command::Deleted { .. } => String::from("deleted"),
+        Command::Sockets { .. } => String::from("sockets"),
+        Command::Watch { .. } => String::from("watch"),
+        Command::Kill { pid, .. } => format!("kill {pid}"),
+        Command::KillPort { port, .. } => format!("kill-port {port}"),
+        Command::Snapshot { .. } => String::from("snapshot"),
+        Command::Diff { .. } => String::from("diff"),
+        Command::Interfaces => String::from("interfaces"),
+        Command::Snmp => String::from("snmp"),
+        Command::Diagnose { .. } => String::from("diagnose"),
+        Command::Firewall { .. } => String::from("firewall"),
+        Command::Resources { .. } => String::from("resources"),
+        Command::Netconfig => String::from("netconfig"),
+        Command::Logs { .. } => String::from("logs"),
+        Command::Bandwidth { .. } => String::from("bandwidth"),
+        Command::Capture { .. } => String::from("capture"),
+    }
+}
+
+fn print_llm_error(command: &Command, allow_write: bool, message: &str) {
+    let err = classify_error(message);
+    let payload = serde_json::json!({
+        "schema": "opn-agent/1",
+        "ok": false,
+        "ts": current_ts(),
+        "cmd": command_label(command),
+        "caps": caps(allow_write),
+        "data": { "error": err },
+        "warnings": [message],
+        "actions": build_actions(allow_write),
+    });
+    println!("{payload}");
+}
+
+fn write_guard_error(cli: &Cli) -> ExitCode {
     let msg = "This command requires --allow-write. Re-run with: opn --allow-write <command>";
-    if llm {
-        println!(
-            "{}",
-            serde_json::json!({"schema":"opn-agent/1","ok":false,"error":msg})
-        );
+    if cli.llm {
+        print_llm_error(&cli.command, cli.allow_write, msg);
     } else {
         eprintln!("error: {msg}");
     }
@@ -299,7 +335,7 @@ fn main() -> ExitCode {
         }
         Command::Kill { pid, signal } => {
             if !cli.allow_write {
-                return write_guard_error(cli.llm);
+                return write_guard_error(&cli);
             }
             match signal.parse::<KillSignal>() {
                 Ok(sig) => commands::kill::run_kill(&platform, *pid, sig, cli.llm, cli.allow_write),
@@ -312,7 +348,7 @@ fn main() -> ExitCode {
             filter,
         } => {
             if !cli.allow_write {
-                return write_guard_error(cli.llm);
+                return write_guard_error(&cli);
             }
             match signal.parse::<KillSignal>() {
                 Ok(sig) => {
@@ -345,7 +381,7 @@ fn main() -> ExitCode {
         }
         Command::Firewall { action } => {
             if !cli.allow_write {
-                return write_guard_error(cli.llm);
+                return write_guard_error(&cli);
             }
             commands::firewall::run(action, cli.llm, cli.allow_write)
         }
@@ -389,7 +425,9 @@ fn main() -> ExitCode {
         Ok(RenderOutcome::HasResults) => ExitCode::from(0),
         Ok(RenderOutcome::NoResults) => ExitCode::from(1),
         Err(err) => {
-            if cli.json || cli.llm {
+            if cli.llm {
+                print_llm_error(&cli.command, cli.allow_write, &err.to_string());
+            } else if cli.json {
                 let payload = serde_json::json!({ "error": classify_error(&err.to_string()) });
                 println!("{payload}");
             } else {
