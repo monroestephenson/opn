@@ -25,3 +25,208 @@ pub use linux::LinuxPlatform as NativePlatform;
 pub fn create_platform() -> NativePlatform {
     NativePlatform::new()
 }
+
+#[cfg(test)]
+pub mod mock;
+
+#[cfg(test)]
+mod tests {
+    use super::mock::MockPlatform;
+    use super::Platform;
+    use crate::model::*;
+
+    #[test]
+    fn test_mock_platform_find_by_port_found() {
+        let mock = MockPlatform::with_sockets(vec![SocketEntry {
+            protocol: Protocol::Tcp,
+            local_addr: "0.0.0.0:80".to_string(),
+            remote_addr: "0.0.0.0:0".to_string(),
+            state: "LISTEN".to_string(),
+            process: ProcessInfo {
+                pid: 1,
+                name: "nginx".to_string(),
+                user: "www".to_string(),
+                uid: 33,
+                command: "/usr/sbin/nginx".to_string(),
+            },
+        }]);
+        let filter = QueryFilter::default();
+        let results = mock.find_by_port(80, &filter).unwrap();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].process.name, "nginx");
+    }
+
+    #[test]
+    fn test_mock_platform_find_by_port_not_found() {
+        let mock = MockPlatform::with_sockets(vec![SocketEntry {
+            protocol: Protocol::Tcp,
+            local_addr: "0.0.0.0:80".to_string(),
+            remote_addr: "0.0.0.0:0".to_string(),
+            state: "LISTEN".to_string(),
+            process: ProcessInfo {
+                pid: 1,
+                name: "nginx".to_string(),
+                user: "www".to_string(),
+                uid: 33,
+                command: "/usr/sbin/nginx".to_string(),
+            },
+        }]);
+        let filter = QueryFilter::default();
+        let results = mock.find_by_port(443, &filter).unwrap();
+        assert_eq!(results.len(), 0);
+    }
+
+    #[test]
+    fn test_mock_platform_find_by_port_multiple() {
+        let mock = MockPlatform::with_sockets(vec![
+            SocketEntry {
+                protocol: Protocol::Tcp,
+                local_addr: "0.0.0.0:80".to_string(),
+                remote_addr: "0.0.0.0:0".to_string(),
+                state: "LISTEN".to_string(),
+                process: ProcessInfo {
+                    pid: 1,
+                    name: "nginx".to_string(),
+                    user: "www".to_string(),
+                    uid: 33,
+                    command: "/usr/sbin/nginx".to_string(),
+                },
+            },
+            SocketEntry {
+                protocol: Protocol::Tcp,
+                local_addr: "127.0.0.1:80".to_string(),
+                remote_addr: "0.0.0.0:0".to_string(),
+                state: "LISTEN".to_string(),
+                process: ProcessInfo {
+                    pid: 2,
+                    name: "apache".to_string(),
+                    user: "www".to_string(),
+                    uid: 33,
+                    command: "/usr/sbin/apache".to_string(),
+                },
+            },
+        ]);
+        let filter = QueryFilter::default();
+        let results = mock.find_by_port(80, &filter).unwrap();
+        assert_eq!(results.len(), 2);
+    }
+
+    #[test]
+    fn test_mock_platform_find_by_file_found() {
+        let mock = MockPlatform::with_files(vec![OpenFile {
+            process: ProcessInfo {
+                pid: 42,
+                name: "vim".to_string(),
+                user: "user".to_string(),
+                uid: 1000,
+                command: "/usr/bin/vim".to_string(),
+            },
+            fd: 3,
+            fd_type: FdType::RegularFile,
+            path: "/etc/hosts".to_string(),
+            deleted: false,
+            socket_info: None,
+        }]);
+        let filter = QueryFilter::default();
+        let results = mock.find_by_file("/etc/hosts", &filter).unwrap();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].process.name, "vim");
+    }
+
+    #[test]
+    fn test_mock_platform_find_by_file_not_found() {
+        let mock = MockPlatform::with_files(vec![OpenFile {
+            process: ProcessInfo {
+                pid: 42,
+                name: "vim".to_string(),
+                user: "user".to_string(),
+                uid: 1000,
+                command: "/usr/bin/vim".to_string(),
+            },
+            fd: 3,
+            fd_type: FdType::RegularFile,
+            path: "/etc/hosts".to_string(),
+            deleted: false,
+            socket_info: None,
+        }]);
+        let filter = QueryFilter::default();
+        let results = mock.find_by_file("/etc/passwd", &filter).unwrap();
+        assert_eq!(results.len(), 0);
+    }
+
+    #[test]
+    fn test_mock_platform_list_pids() {
+        let mock = MockPlatform::with_pids(vec![1, 42, 1000, 9999]);
+        let filter = QueryFilter::default();
+        let pids = mock.list_pids(&filter).unwrap();
+        assert_eq!(pids, vec![1, 42, 1000, 9999]);
+    }
+
+    #[test]
+    fn test_mock_platform_list_pids_empty() {
+        let mock = MockPlatform::empty();
+        let filter = QueryFilter::default();
+        let pids = mock.list_pids(&filter).unwrap();
+        assert!(pids.is_empty());
+    }
+
+    #[test]
+    fn test_mock_platform_process_info() {
+        let mock = MockPlatform::with_pids(vec![42]);
+        let info = mock.process_info(42).unwrap();
+        assert_eq!(info.pid, 42);
+    }
+
+    #[test]
+    fn test_mock_platform_process_info_not_found() {
+        let mock = MockPlatform::with_pids(vec![1]);
+        let result = mock.process_info(99999);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_mock_platform_stubs_return_errors() {
+        let mock = MockPlatform::empty();
+        let filter = QueryFilter::default();
+        assert!(mock.list_sockets(&filter).is_err());
+        assert!(mock.find_deleted(&filter).is_err());
+    }
+
+    #[test]
+    fn test_mock_platform_list_open_files() {
+        let mock = MockPlatform::with_files(vec![
+            OpenFile {
+                process: ProcessInfo {
+                    pid: 42,
+                    name: "test".to_string(),
+                    user: "user".to_string(),
+                    uid: 1000,
+                    command: "test".to_string(),
+                },
+                fd: 0,
+                fd_type: FdType::RegularFile,
+                path: "/dev/null".to_string(),
+                deleted: false,
+                socket_info: None,
+            },
+            OpenFile {
+                process: ProcessInfo {
+                    pid: 42,
+                    name: "test".to_string(),
+                    user: "user".to_string(),
+                    uid: 1000,
+                    command: "test".to_string(),
+                },
+                fd: 1,
+                fd_type: FdType::Pipe,
+                path: "pipe:[123]".to_string(),
+                deleted: false,
+                socket_info: None,
+            },
+        ]);
+        let files = mock.list_open_files(42).unwrap();
+        assert_eq!(files.len(), 2);
+        assert_eq!(files[0].fd_type, FdType::RegularFile);
+        assert_eq!(files[1].fd_type, FdType::Pipe);
+    }
+}

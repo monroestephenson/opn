@@ -1,5 +1,7 @@
 pub mod table;
 pub mod json;
+#[cfg(test)]
+mod tests;
 
 use serde::Serialize;
 
