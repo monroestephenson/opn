@@ -15,6 +15,10 @@ Use `pre-commit` to run formatting/lint/tests before each commit:
 ```bash
 pipx install pre-commit   # or: brew install pre-commit
 pre-commit install
+
+# Fuzz `/proc/net` parser
+cargo install cargo-fuzz
+cargo fuzz run proc_net
 ```
 
 ## Usage

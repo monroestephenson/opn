@@ -4,6 +4,7 @@ mod model;
 #[cfg(any(test, target_os = "linux"))]
 #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
 mod net;
+mod path_safety;
 mod platform;
 mod render;
 mod socket_display;

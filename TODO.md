@@ -146,8 +146,8 @@
 ### Security
 - [x] Audit: ensure no information leaks when running as root (**urgent**)
 - [x] Audit: ensure no TOCTOU races in `/proc` reads (**urgent**)
-- [ ] Fuzz test the `/proc/net/tcp` parser
-- [ ] Validate all user-supplied paths (no path traversal in output)
+- [x] Fuzz test the `/proc/net/tcp` parser
+- [x] Validate all user-supplied paths (no path traversal in output)
 
 ---
 

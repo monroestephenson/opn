@@ -23,9 +23,10 @@ pub fn parse_proc_ipv6(hex: &str) -> Option<Ipv6Addr> {
     if hex.len() != 32 {
         return None;
     }
+    let raw = hex.as_bytes();
     let mut bytes = [0u8; 16];
     for i in 0..4 {
-        let chunk = &hex[i * 8..(i + 1) * 8];
+        let chunk = std::str::from_utf8(&raw[i * 8..(i + 1) * 8]).ok()?;
         let val = u32::from_str_radix(chunk, 16).ok()?;
         let le = val.to_le_bytes();
         bytes[i * 4] = le[0];
@@ -93,6 +94,92 @@ pub struct ProcNetEntry {
     pub inode: u64,
 }
 
+/// Summary of a /proc/net/* file parse attempt.
+#[derive(Debug, Default)]
+pub struct ProcNetParseResult {
+    pub entries: Vec<ProcNetEntry>,
+    /// Lines that could not be parsed (excluding the header).
+    pub failed_lines: usize,
+    /// False if the header row was missing or didn't contain expected columns.
+    pub header_valid: bool,
+}
+
+/// Expected column names that must appear in a /proc/net/tcp[6] or udp[6] header.
+const EXPECTED_HEADER_COLS: &[&str] = &["local_address", "rem_address", "st", "uid", "inode"];
+
+/// Returns true if the header line contains all expected column names.
+pub fn validate_proc_net_header(header: &str) -> bool {
+    let cols: Vec<&str> = header.split_whitespace().collect();
+    EXPECTED_HEADER_COLS
+        .iter()
+        .all(|expected| cols.iter().any(|c| c == expected))
+}
+
+/// Parse a full /proc/net/tcp file, validating the header first.
+pub fn parse_proc_net_tcp(content: &str) -> ProcNetParseResult {
+    parse_proc_net_file(content, false, Protocol::Tcp, false)
+}
+
+/// Parse a full /proc/net/tcp6 file, validating the header first.
+pub fn parse_proc_net_tcp6(content: &str) -> ProcNetParseResult {
+    parse_proc_net_file(content, true, Protocol::Tcp, false)
+}
+
+/// Parse a full /proc/net/udp file, validating the header first.
+pub fn parse_proc_net_udp(content: &str) -> ProcNetParseResult {
+    parse_proc_net_file(content, false, Protocol::Udp, true)
+}
+
+/// Parse a full /proc/net/udp6 file, validating the header first.
+pub fn parse_proc_net_udp6(content: &str) -> ProcNetParseResult {
+    parse_proc_net_file(content, true, Protocol::Udp, true)
+}
+
+fn parse_proc_net_file(
+    content: &str,
+    is_v6: bool,
+    protocol: Protocol,
+    is_udp: bool,
+) -> ProcNetParseResult {
+    let mut lines = content.lines();
+    let header = lines.next().unwrap_or("");
+    let header_valid = validate_proc_net_header(header);
+
+    let mut entries = Vec::new();
+    let mut failed_lines = 0;
+
+    for line in lines {
+        if line.trim().is_empty() {
+            continue;
+        }
+        let parsed = if is_v6 {
+            parse_proc_net_tcp6_line(line)
+        } else {
+            parse_proc_net_tcp_line(line)
+        };
+        match parsed {
+            Some(mut entry) => {
+                entry.protocol = protocol.clone();
+                if is_udp {
+                    entry.state = if entry.state == "CLOSE" {
+                        "UNCONN".to_string()
+                    } else {
+                        entry.state
+                    };
+                }
+                entries.push(entry);
+            }
+            None => failed_lines += 1,
+        }
+    }
+
+    ProcNetParseResult {
+        entries,
+        failed_lines,
+        header_valid,
+    }
+}
+
 /// Parse a single line from /proc/net/tcp.
 pub fn parse_proc_net_tcp_line(line: &str) -> Option<ProcNetEntry> {
     let fields: Vec<&str> = line.split_whitespace().collect();
@@ -136,35 +223,6 @@ pub fn parse_proc_net_tcp6_line(line: &str) -> Option<ProcNetEntry> {
         remote_port,
         state,
         inode,
-    })
-}
-
-/// Parse a single line from /proc/net/udp.
-pub fn parse_proc_net_udp_line(line: &str) -> Option<ProcNetEntry> {
-    // Same format as tcp, but state is less meaningful
-    parse_proc_net_tcp_line(line).map(|mut e| {
-        e.protocol = Protocol::Udp;
-        // UDP states are different — 07 = established, others mostly unused
-        // We just show the raw state or simplify
-        e.state = if e.state == "CLOSE" {
-            "UNCONN".to_string()
-        } else {
-            e.state
-        };
-        e
-    })
-}
-
-/// Parse a single line from /proc/net/udp6.
-pub fn parse_proc_net_udp6_line(line: &str) -> Option<ProcNetEntry> {
-    parse_proc_net_tcp6_line(line).map(|mut e| {
-        e.protocol = Protocol::Udp;
-        e.state = if e.state == "CLOSE" {
-            "UNCONN".to_string()
-        } else {
-            e.state
-        };
-        e
     })
 }
 
@@ -274,6 +332,12 @@ mod tests {
     #[test]
     fn test_parse_proc_ipv6_invalid_hex() {
         assert!(parse_proc_ipv6("ZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZ").is_none());
+    }
+
+    #[test]
+    fn test_parse_proc_ipv6_non_ascii_does_not_panic() {
+        // 16 chars * 2 bytes each = 32 bytes, but not valid ASCII hex.
+        assert!(parse_proc_ipv6("ÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿ").is_none());
     }
 
     // ============================================================
@@ -533,13 +597,21 @@ mod tests {
     }
 
     // ============================================================
-    // /proc/net/udp line parsing
+    // /proc/net/udp and udp6 parsing (via file-level API)
     // ============================================================
+
+    const UDP_HEADER: &str =
+        "  sl  local_address rem_address   st tx_queue rx_queue tr tm->when retrnsmt   uid  timeout inode";
 
     #[test]
     fn test_parse_proc_net_udp_line() {
-        let line = "   0: 00000000:0035 00000000:0000 07 00000000:00000000 00:00000000 00000000  0 0 55555 1";
-        let entry = parse_proc_net_udp_line(line).unwrap();
+        let content = format!(
+            "{}\n   0: 00000000:0035 00000000:0000 07 00000000:00000000 00:00000000 00000000  0 0 55555 1\n",
+            UDP_HEADER
+        );
+        let result = parse_proc_net_udp(&content);
+        assert_eq!(result.entries.len(), 1);
+        let entry = &result.entries[0];
         assert_eq!(entry.local_addr, "0.0.0.0");
         assert_eq!(entry.local_port, 53); // DNS
                                           // State 07 = CLOSE in TCP, but UDP rewrites CLOSE → UNCONN
@@ -549,32 +621,35 @@ mod tests {
 
     #[test]
     fn test_parse_proc_net_udp_line_unconn() {
-        // State 07 maps to "CLOSE" in TCP, but UDP rewrite maps it to itself (not "CLOSE")
-        // Actually state 07 = CLOSE in tcp_state_name. UDP rewrites "CLOSE" to "UNCONN"
-        let line = "   0: 00000000:0035 00000000:0000 07 00000000:00000000 00:00000000 00000000  0 0 55555 1";
-        let entry = parse_proc_net_udp_line(line).unwrap();
-        assert_eq!(entry.state, "UNCONN");
+        let content = format!(
+            "{}\n   0: 00000000:0035 00000000:0000 07 00000000:00000000 00:00000000 00000000  0 0 55555 1\n",
+            UDP_HEADER
+        );
+        let result = parse_proc_net_udp(&content);
+        assert_eq!(result.entries[0].state, "UNCONN");
     }
 
     #[test]
     fn test_parse_proc_net_udp_line_non_close_state_preserved() {
         // If state isn't CLOSE, it should be preserved as-is
-        let line = "   0: 00000000:0035 00000000:0000 01 00000000:00000000 00:00000000 00000000  0 0 55555 1";
-        let entry = parse_proc_net_udp_line(line).unwrap();
-        assert_eq!(entry.state, "ESTABLISHED");
+        let content = format!(
+            "{}\n   0: 00000000:0035 00000000:0000 01 00000000:00000000 00:00000000 00000000  0 0 55555 1\n",
+            UDP_HEADER
+        );
+        let result = parse_proc_net_udp(&content);
+        assert_eq!(result.entries[0].state, "ESTABLISHED");
     }
-
-    // ============================================================
-    // /proc/net/udp6 line parsing
-    // ============================================================
 
     #[test]
     fn test_parse_proc_net_udp6_line() {
-        let line = "   0: 00000000000000000000000000000000:0035 00000000000000000000000000000000:0000 07 00000000:00000000 00:00000000 00000000  0 0 66666 1";
-        let entry = parse_proc_net_udp6_line(line).unwrap();
-        assert_eq!(entry.local_port, 53);
-        assert_eq!(entry.state, "UNCONN");
-        assert_eq!(entry.inode, 66666);
+        let content = format!(
+            "{}\n   0: 00000000000000000000000000000000:0035 00000000000000000000000000000000:0000 07 00000000:00000000 00:00000000 00000000  0 0 66666 1\n",
+            UDP_HEADER
+        );
+        let result = parse_proc_net_udp6(&content);
+        assert_eq!(result.entries[0].local_port, 53);
+        assert_eq!(result.entries[0].state, "UNCONN");
+        assert_eq!(result.entries[0].inode, 66666);
     }
 
     // ============================================================
@@ -613,5 +688,117 @@ mod tests {
         assert_eq!(entries[2].remote_port, 443);
         assert_eq!(entries[2].state, "ESTABLISHED");
         assert_eq!(entries[2].inode, 3333);
+    }
+
+    // ============================================================
+    // Header validation
+    // ============================================================
+
+    #[test]
+    fn test_validate_proc_net_header_valid() {
+        let header = "  sl  local_address rem_address   st tx_queue rx_queue tr tm->when retrnsmt   uid  timeout inode";
+        assert!(validate_proc_net_header(header));
+    }
+
+    #[test]
+    fn test_validate_proc_net_header_missing_inode() {
+        // If inode is gone the header check must fail.
+        let header = "  sl  local_address rem_address   st tx_queue rx_queue tr tm->when retrnsmt   uid  timeout";
+        assert!(!validate_proc_net_header(header));
+    }
+
+    #[test]
+    fn test_validate_proc_net_header_empty() {
+        assert!(!validate_proc_net_header(""));
+    }
+
+    #[test]
+    fn test_validate_proc_net_header_data_line() {
+        // A data line (not a header) must not pass validation.
+        let line = "   0: 0100007F:0050 00000000:0000 0A 00000000:00000000 00:00000000 00000000  1000 0 12345 1";
+        assert!(!validate_proc_net_header(line));
+    }
+
+    // ============================================================
+    // File-level parse functions
+    // ============================================================
+
+    // Real /proc/net/tcp output from Linux 5.15 (Ubuntu 22.04 LTS).
+    // The extra trailing columns (socket pointer, rto, ato, etc.) are present
+    // in real kernels and must not break parsing.
+    const REAL_KERNEL_TCP_FIXTURE: &str = "\
+  sl  local_address rem_address   st tx_queue rx_queue tr tm->when retrnsmt   uid  timeout inode
+   0: 0100007F:0277 00000000:0000 0A 00000000:00000000 00:00000000 00000000   106        0 20337 1 0000000000000000 100 0 0 10 0
+   1: 00000000:0016 00000000:0000 0A 00000000:00000000 00:00000000 00000000     0        0 22535 1 0000000000000000 100 0 0 10 0
+   2: 6E28A8C0:BB28 0A28A8C0:1388 01 00000000:00000000 00:00000000 00000000  1000        0 33210 4 0000000000000000 20 4 24 10 -1";
+
+    #[test]
+    fn test_parse_proc_net_tcp_real_fixture() {
+        let result = parse_proc_net_tcp(REAL_KERNEL_TCP_FIXTURE);
+        assert!(result.header_valid, "header should be recognised as valid");
+        assert_eq!(result.failed_lines, 0, "no lines should fail to parse");
+        assert_eq!(result.entries.len(), 3);
+
+        assert_eq!(result.entries[0].local_addr, "127.0.0.1");
+        assert_eq!(result.entries[0].local_port, 631); // CUPS
+        assert_eq!(result.entries[0].state, "LISTEN");
+        assert_eq!(result.entries[0].inode, 20337);
+
+        assert_eq!(result.entries[1].local_addr, "0.0.0.0");
+        assert_eq!(result.entries[1].local_port, 22); // SSH
+        assert_eq!(result.entries[1].state, "LISTEN");
+        assert_eq!(result.entries[1].inode, 22535);
+
+        assert_eq!(result.entries[2].state, "ESTABLISHED");
+        assert_eq!(result.entries[2].inode, 33210);
+    }
+
+    #[test]
+    fn test_parse_proc_net_tcp_invalid_header_still_parses() {
+        // If the header is wrong we warn but still return whatever we could parse.
+        let content = "garbage header line\n   0: 0100007F:0050 00000000:0000 0A 00000000:00000000 00:00000000 00000000  1000 0 12345 1\n";
+        let result = parse_proc_net_tcp(content);
+        assert!(!result.header_valid);
+        assert_eq!(result.entries.len(), 1);
+        assert_eq!(result.entries[0].inode, 12345);
+    }
+
+    #[test]
+    fn test_parse_proc_net_tcp_counts_failed_lines() {
+        let content = "\
+  sl  local_address rem_address   st tx_queue rx_queue tr tm->when retrnsmt   uid  timeout inode
+   0: 0100007F:0050 00000000:0000 0A 00000000:00000000 00:00000000 00000000  1000 0 12345 1
+   this line is garbage
+   1: 0100007F:0051 00000000:0000 0A 00000000:00000000 00:00000000 00000000  1000 0 12346 1";
+        let result = parse_proc_net_tcp(content);
+        assert!(result.header_valid);
+        assert_eq!(result.failed_lines, 1);
+        assert_eq!(result.entries.len(), 2);
+    }
+
+    #[test]
+    fn test_parse_proc_net_tcp_empty_file() {
+        let result = parse_proc_net_tcp("");
+        assert!(!result.header_valid);
+        assert_eq!(result.entries.len(), 0);
+        assert_eq!(result.failed_lines, 0);
+    }
+
+    // Real /proc/net/udp output (Linux 5.15 style).
+    const REAL_KERNEL_UDP_FIXTURE: &str = "\
+  sl  local_address rem_address   st tx_queue rx_queue tr tm->when retrnsmt   uid  timeout inode
+   0: 00000000:0044 00000000:0000 07 00000000:00000000 00:00000000 00000000     0        0 18932 2 0000000000000000 0
+   1: 00000000:0035 00000000:0000 07 00000000:00000000 00:00000000 00000000   101        0 19801 2 0000000000000000 0";
+
+    #[test]
+    fn test_parse_proc_net_udp_real_fixture() {
+        let result = parse_proc_net_udp(REAL_KERNEL_UDP_FIXTURE);
+        assert!(result.header_valid);
+        assert_eq!(result.failed_lines, 0);
+        assert_eq!(result.entries.len(), 2);
+        // UDP state 07 (CLOSE in TCP) must be remapped to UNCONN.
+        assert_eq!(result.entries[0].state, "UNCONN");
+        assert_eq!(result.entries[0].local_port, 68); // DHCP client
+        assert_eq!(result.entries[1].local_port, 53); // DNS
     }
 }

@@ -35,6 +35,7 @@ pub fn run(
     filter: &QueryFilter,
     json: bool,
 ) -> Result<RenderOutcome> {
+    crate::path_safety::validate_user_path(path)?;
     let entries = platform.find_by_file(path, filter)?;
     Ok(render::render(&entries, json))
 }
