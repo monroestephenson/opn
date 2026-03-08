@@ -57,7 +57,7 @@ fn tmp_path_aliases(path: &str) -> Vec<String> {
 fn test_help_flag() {
     let output = opn_cmd().arg("--help").output().expect("failed to run opn");
     let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(stdout.contains("A modern, human-friendly replacement for lsof"));
+    assert!(stdout.contains("Find which processes have files, ports, and sockets open"));
     assert!(stdout.contains("port"));
     assert!(stdout.contains("file"));
     assert!(stdout.contains("pid"));

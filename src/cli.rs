@@ -6,73 +6,73 @@ use crate::model::QueryFilter;
 #[command(
     name = "opn",
     version,
-    about = "A modern, human-friendly replacement for lsof"
+    about = "Find which processes have files, ports, and sockets open"
 )]
 pub struct Cli {
     #[command(subcommand)]
     pub command: Command,
 
-    /// Output results as JSON
+    /// Output results as JSON instead of a table.
     #[arg(long, global = true)]
     pub json: bool,
 }
 
 #[derive(Subcommand, Debug)]
 pub enum Command {
-    /// Find processes listening on a port
+    /// Show processes with sockets bound to a local port.
     Port {
-        /// Port number to look up
+        /// Local port number to inspect.
         port: u16,
 
         #[command(flatten)]
         filter: FilterArgs,
     },
 
-    /// Find processes that have a file open
+    /// Show processes that currently have a file open.
     File {
-        /// Path to the file
+        /// File path to match.
         path: String,
 
         #[command(flatten)]
         filter: FilterArgs,
     },
 
-    /// Show open files for a given PID
+    /// List open file descriptors for a process ID.
     Pid {
-        /// Process ID
+        /// Process ID to inspect.
         pid: u32,
 
         #[command(flatten)]
         filter: FilterArgs,
     },
 
-    /// Find processes with deleted files still open
+    /// Show processes still holding deleted files open.
     Deleted {
         #[command(flatten)]
         filter: FilterArgs,
     },
 
-    /// List all open sockets
+    /// List open sockets.
     Sockets {
         #[command(flatten)]
         filter: FilterArgs,
     },
 
-    /// Watch open files/sockets in real time
+    /// Refresh and display live results continuously.
     Watch {
-        /// Watch target type
+        /// What to watch: sockets, one port, or one file.
         #[arg(long, value_enum, default_value_t = WatchTarget::Sockets)]
         target: WatchTarget,
 
-        /// Port to watch (required when --target port)
+        /// Port to watch (required with `--target port`).
         #[arg(long)]
         port: Option<u16>,
 
-        /// File path to watch (required when --target file)
+        /// File path to watch (required with `--target file`).
         #[arg(long)]
         file: Option<String>,
 
-        /// Refresh interval in seconds
+        /// Refresh interval in seconds (1-60).
         #[arg(long, default_value_t = 2, value_parser = clap::value_parser!(u64).range(1..=60))]
         interval: u64,
 
@@ -90,39 +90,39 @@ pub enum WatchTarget {
 
 #[derive(Parser, Debug, Clone)]
 pub struct FilterArgs {
-    /// Include all users' processes (may require root)
+    /// Include all users' processes (requires root for full visibility).
     #[arg(long, short = 'a')]
     pub all: bool,
 
-    /// Filter by username
+    /// Match an exact username.
     #[arg(long, short = 'u')]
     pub user: Option<String>,
 
-    /// Filter by process name
+    /// Match an exact process name.
     #[arg(long, short = 'p')]
     pub process: Option<String>,
 
-    /// Filter by socket state (e.g. LISTEN, ESTABLISHED)
+    /// Match socket state (example: LISTEN, ESTABLISHED).
     #[arg(long)]
     pub state: Option<String>,
 
-    /// Filter by PID
+    /// Match an exact process ID.
     #[arg(long = "pid", visible_alias = "filter-pid")]
     pub filter_pid: Option<u32>,
 
-    /// Show only TCP sockets
+    /// Include TCP sockets.
     #[arg(long)]
     pub tcp: bool,
 
-    /// Show only UDP sockets
+    /// Include UDP sockets.
     #[arg(long)]
     pub udp: bool,
 
-    /// Show only IPv4 sockets
+    /// Include IPv4 sockets.
     #[arg(long)]
     pub ipv4: bool,
 
-    /// Show only IPv6 sockets
+    /// Include IPv6 sockets.
     #[arg(long)]
     pub ipv6: bool,
 }

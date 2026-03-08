@@ -1,5 +1,6 @@
 use anyhow::Result;
 
+use super::sort_sockets;
 use crate::model::{QueryFilter, SocketEntry};
 use crate::platform::Platform;
 use crate::render;
@@ -36,6 +37,7 @@ pub fn run(
     filter: &QueryFilter,
     json: bool,
 ) -> Result<RenderOutcome> {
-    let entries = platform.find_by_port(port, filter)?;
+    let mut entries = platform.find_by_port(port, filter)?;
+    sort_sockets(&mut entries);
     Ok(render::render(&entries, json))
 }

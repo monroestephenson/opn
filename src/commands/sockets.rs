@@ -1,12 +1,14 @@
 use anyhow::Result;
 
+use super::sort_sockets;
 use crate::model::QueryFilter;
 use crate::platform::Platform;
 use crate::render;
 use crate::render::RenderOutcome;
 
 pub fn run(platform: &dyn Platform, filter: &QueryFilter, json: bool) -> Result<RenderOutcome> {
-    let entries = platform.list_sockets(filter)?;
+    let mut entries = platform.list_sockets(filter)?;
+    sort_sockets(&mut entries);
     Ok(render::render(&entries, json))
 }
 
