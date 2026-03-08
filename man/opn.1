@@ -1,0 +1,43 @@
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.TH opn 1  "opn 0.2.1" 
+.SH NAME
+opn \- Find which processes have files, ports, and sockets open
+.SH SYNOPSIS
+\fBopn\fR [\fB\-\-json\fR] [\fB\-h\fR|\fB\-\-help\fR] [\fB\-V\fR|\fB\-\-version\fR] <\fIsubcommands\fR>
+.SH DESCRIPTION
+Find which processes have files, ports, and sockets open
+.SH OPTIONS
+.TP
+\fB\-\-json\fR
+Output results as JSON instead of a table
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
+.TP
+\fB\-V\fR, \fB\-\-version\fR
+Print version
+.SH SUBCOMMANDS
+.TP
+opn\-port(1)
+Show processes with sockets bound to a local port
+.TP
+opn\-file(1)
+Show processes that currently have a file open
+.TP
+opn\-pid(1)
+List open file descriptors for a process ID
+.TP
+opn\-deleted(1)
+Show processes still holding deleted files open
+.TP
+opn\-sockets(1)
+List open sockets
+.TP
+opn\-watch(1)
+Refresh and display live results continuously
+.TP
+opn\-help(1)
+Print this message or the help of the given subcommand(s)
+.SH VERSION
+v0.2.1
