@@ -8,8 +8,8 @@ pub fn run(
     filter: &crate::model::QueryFilter,
     as_json: bool,
 ) -> anyhow::Result<()> {
-    use anyhow::Context;
     use crate::cli::WatchTarget;
+    use anyhow::Context;
     use crossterm::event::{self, Event, KeyCode};
     use crossterm::execute;
     use crossterm::terminal::{
@@ -246,18 +246,16 @@ fn terminate_pid(pid: u32) -> anyhow::Result<()> {
 fn socket_rows(entries: &[crate::model::SocketEntry]) -> Vec<WatchRow> {
     entries
         .iter()
-        .map(|e| {
-            WatchRow {
-                cols: [
-                    e.protocol.to_string(),
-                    e.local_addr.clone(),
-                    e.remote_addr.clone(),
-                    e.state.clone(),
-                    e.process.pid.to_string(),
-                    e.process.name.clone(),
-                ],
-                pid: e.process.pid,
-            }
+        .map(|e| WatchRow {
+            cols: [
+                e.protocol.to_string(),
+                e.local_addr.clone(),
+                e.remote_addr.clone(),
+                e.state.clone(),
+                e.process.pid.to_string(),
+                e.process.name.clone(),
+            ],
+            pid: e.process.pid,
         })
         .collect()
 }
@@ -266,22 +264,20 @@ fn socket_rows(entries: &[crate::model::SocketEntry]) -> Vec<WatchRow> {
 fn file_rows(entries: &[crate::model::OpenFile]) -> Vec<WatchRow> {
     entries
         .iter()
-        .map(|e| {
-            WatchRow {
-                cols: [
-                    e.process.pid.to_string(),
-                    e.process.name.clone(),
-                    e.process.user.clone(),
-                    e.fd.to_string(),
-                    e.fd_type.to_string(),
-                    if e.deleted {
-                        format!("{} (deleted)", e.path)
-                    } else {
-                        e.path.clone()
-                    },
-                ],
-                pid: e.process.pid,
-            }
+        .map(|e| WatchRow {
+            cols: [
+                e.process.pid.to_string(),
+                e.process.name.clone(),
+                e.process.user.clone(),
+                e.fd.to_string(),
+                e.fd_type.to_string(),
+                if e.deleted {
+                    format!("{} (deleted)", e.path)
+                } else {
+                    e.path.clone()
+                },
+            ],
+            pid: e.process.pid,
         })
         .collect()
 }
