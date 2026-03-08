@@ -12,7 +12,10 @@
       "Bash(cargo test:*)",
       "Bash(./target/debug/opn file:*)",
       "Bash(./target/debug/opn pid:*)",
-      "Bash(cargo clippy:*)"
+      "Bash(cargo clippy:*)",
+      "Bash(chmod +x:*)",
+      "Bash(cargo fmt:*)",
+      "Bash(cargo bench:*)"
     ]
   }
 }

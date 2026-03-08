@@ -69,9 +69,40 @@ fn classify_error(message: &str) -> JsonError {
     }
 }
 
+fn has_all_flag(cli: &Cli) -> bool {
+    match &cli.command {
+        Command::Port { filter, .. }
+        | Command::File { filter, .. }
+        | Command::Pid { filter, .. }
+        | Command::Deleted { filter }
+        | Command::Sockets { filter } => filter.all,
+        Command::Watch { filter, .. } => filter.all,
+    }
+}
+
+fn warn_partial_visibility(cli: &Cli) {
+    if !has_all_flag(cli) {
+        return;
+    }
+    let is_root = unsafe { libc::geteuid() } == 0;
+    if !is_root {
+        eprintln!(
+            "Warning: --all requires root/sudo for full visibility. \
+             Results may be incomplete for other users' processes."
+        );
+    }
+}
+
+/// Exit codes:
+///   0 — results found and printed
+///   1 — no results (query succeeded but matched nothing)
+///   2 — error (invalid input, permission denied, runtime failure)
 fn main() -> ExitCode {
     let cli = Cli::parse();
     let platform = create_platform();
+
+    // Warn about partial visibility when --all is used without root/sudo.
+    warn_partial_visibility(&cli);
 
     let result = match &cli.command {
         Command::Port { port, filter } => {

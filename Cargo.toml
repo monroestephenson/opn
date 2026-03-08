@@ -30,3 +30,10 @@ optional = true
 [features]
 default = ["watch"]
 watch = ["dep:crossterm", "dep:ratatui"]
+
+[dev-dependencies]
+criterion = { version = "0.5", features = ["html_reports"] }
+
+[[bench]]
+name = "platform_bench"
+harness = false
