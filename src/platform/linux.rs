@@ -52,6 +52,8 @@ impl LinuxPlatform {
             FdType::Socket
         } else if target.starts_with("pipe:[") {
             FdType::Pipe
+        } else if target.starts_with("anon_inode:") {
+            FdType::Unknown
         } else if target.starts_with("/dev/") {
             FdType::Device
         } else if Path::new(target).is_dir() {
@@ -68,8 +70,8 @@ impl LinuxPlatform {
     ) -> HashMap<u64, net::ProcNetEntry> {
         let mut map = HashMap::new();
 
-        let should_tcp = !filter.udp || filter.tcp || (!filter.tcp && !filter.udp);
-        let should_udp = !filter.tcp || filter.udp || (!filter.tcp && !filter.udp);
+        let should_tcp = !filter.udp || filter.tcp;
+        let should_udp = !filter.tcp || filter.udp;
         let want_v4 = !filter.ipv6;
         let want_v6 = !filter.ipv4;
 
