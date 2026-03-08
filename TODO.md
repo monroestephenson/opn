@@ -50,12 +50,14 @@
 - [x] JSON output
 
 ## Phase 7: Watch Mode (`opn watch`)
-- [x] Feature-gated behind `watch` Cargo feature
+- [x] Feature implemented with `watch` Cargo feature (enabled by default build)
 - [x] Add `ratatui` + `crossterm` dependencies
 - [x] TUI layout: table with live-updating rows
-- [ ] Configurable refresh interval (`--interval 2s`)
-- [~] Support watching ports, files, or all sockets (currently sockets only)
+- [x] Configurable refresh interval (`--interval 2s`)
+- [x] Support watching ports, files, or all sockets (`--target`)
 - [x] Keyboard controls: quit (q), pause (space), sort columns
+- [x] Vim/arrow navigation and row selection (`j/k`, up/down, `g/G`)
+- [x] Terminate selected process from watch (`x` sends SIGTERM)
 
 ## Improvements & Polish
 
@@ -138,7 +140,7 @@
 ---
 
 ## Known Issues
-1. `watch` supports sockets only; watch-by-port/file and interval configuration are not implemented
+1. `watch` uses SIGTERM on `x` with no confirmation prompt (intentionally fast, but easy to misfire)
 2. `--filter-pid` is retained as an alias for compatibility; canonical flag is `--pid`
 3. vnode path lookup may still fail for some FDs and returns `<path unavailable>`
 4. JSON errors have categories/codes but no stable versioned schema contract yet

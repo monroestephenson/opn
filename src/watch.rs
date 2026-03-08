@@ -66,18 +66,22 @@ pub fn run(
     let mut last_tick = Instant::now();
     let tick_rate = Duration::from_secs(interval_secs);
     let mut rows = snapshot_rows(platform, target, port, file, filter)?;
+    let mut selected = 0usize;
+    let mut status_msg = String::new();
     let title = match target {
         WatchTarget::Sockets => "Sockets",
         WatchTarget::Port => "Port",
         WatchTarget::File => "File",
     };
+    let headers = headers_for(target);
 
     let result: anyhow::Result<()> = (|| loop {
         rows.sort_by(|a, b| match sort_key {
-            SortKey::Protocol => a[0].cmp(&b[0]).then(a[1].cmp(&b[1])),
-            SortKey::Local => a[1].cmp(&b[1]).then(a[4].cmp(&b[4])),
-            SortKey::Pid => a[4].cmp(&b[4]).then(a[1].cmp(&b[1])),
+            SortKey::Protocol => a.cols[0].cmp(&b.cols[0]).then(a.cols[1].cmp(&b.cols[1])),
+            SortKey::Local => a.cols[1].cmp(&b.cols[1]).then(a.cols[4].cmp(&b.cols[4])),
+            SortKey::Pid => a.cols[4].cmp(&b.cols[4]).then(a.cols[1].cmp(&b.cols[1])),
         });
+        clamp_selection(&mut selected, rows.len());
 
         terminal.draw(|frame| {
             let area = frame.area();
@@ -87,26 +91,36 @@ pub fn run(
                 .split(area);
 
             let status = format!(
-                "opn watch {} | {} | sort={} | interval={}s | rows={} | q quit, space pause, s sort",
+                "opn watch {} | {} | sort={} | interval={}s | rows={} | j/k move, g/G top/bottom, x terminate, q quit",
                 title.to_ascii_lowercase(),
                 if paused { "paused" } else { "running" },
                 sort_key.label(),
                 interval_secs,
                 rows.len()
             );
-            frame.render_widget(Paragraph::new(status), chunks[0]);
+            let full_status = if status_msg.is_empty() {
+                status
+            } else {
+                format!("{status} | {status_msg}")
+            };
+            frame.render_widget(Paragraph::new(full_status), chunks[0]);
 
-            let header = Row::new(["COL1", "COL2", "COL3", "COL4", "COL5", "COL6"])
+            let header = Row::new(headers)
                 .style(Style::default().add_modifier(Modifier::BOLD));
-            let rows_view = rows.iter().map(|e| {
-                Row::new(vec![
-                    Cell::from(e[0].clone()),
-                    Cell::from(e[1].clone()),
-                    Cell::from(e[2].clone()),
-                    Cell::from(e[3].clone()),
-                    Cell::from(e[4].clone()),
-                    Cell::from(e[5].clone()),
-                ])
+            let rows_view = rows.iter().enumerate().map(|(idx, e)| {
+                let row = Row::new(vec![
+                    Cell::from(e.cols[0].clone()),
+                    Cell::from(e.cols[1].clone()),
+                    Cell::from(e.cols[2].clone()),
+                    Cell::from(e.cols[3].clone()),
+                    Cell::from(e.cols[4].clone()),
+                    Cell::from(e.cols[5].clone()),
+                ]);
+                if idx == selected {
+                    row.style(Style::default().add_modifier(Modifier::REVERSED))
+                } else {
+                    row
+                }
             });
             let table = Table::new(
                 rows_view,
@@ -131,6 +145,39 @@ pub fn run(
                     KeyCode::Char('q') => break Ok(()),
                     KeyCode::Char(' ') => paused = !paused,
                     KeyCode::Char('s') => sort_key = sort_key.next(),
+                    KeyCode::Down | KeyCode::Char('j') => {
+                        if selected + 1 < rows.len() {
+                            selected += 1;
+                        }
+                    }
+                    KeyCode::Up | KeyCode::Char('k') => {
+                        selected = selected.saturating_sub(1);
+                    }
+                    KeyCode::Char('g') => selected = 0,
+                    KeyCode::Char('G') => {
+                        if !rows.is_empty() {
+                            selected = rows.len() - 1;
+                        }
+                    }
+                    KeyCode::Char('x') => {
+                        if let Some(row) = rows.get(selected) {
+                            match terminate_pid(row.pid) {
+                                Ok(()) => {
+                                    status_msg = format!("sent SIGTERM to pid {}", row.pid);
+                                    if !paused {
+                                        rows = snapshot_rows(platform, target, port, file, filter)?;
+                                        clamp_selection(&mut selected, rows.len());
+                                        last_tick = Instant::now();
+                                    }
+                                }
+                                Err(err) => {
+                                    status_msg = err.to_string();
+                                }
+                            }
+                        } else {
+                            status_msg = String::from("no row selected");
+                        }
+                    }
                     _ => {}
                 }
             }
@@ -138,6 +185,7 @@ pub fn run(
 
         if !paused && last_tick.elapsed() >= tick_rate {
             rows = snapshot_rows(platform, target, port, file, filter)?;
+            clamp_selection(&mut selected, rows.len());
             last_tick = Instant::now();
         }
     })();
@@ -149,39 +197,89 @@ pub fn run(
 }
 
 #[cfg(feature = "watch")]
-fn socket_rows(entries: &[crate::model::SocketEntry]) -> Vec<[String; 6]> {
+#[derive(Clone)]
+struct WatchRow {
+    cols: [String; 6],
+    pid: u32,
+}
+
+#[cfg(feature = "watch")]
+fn headers_for(target: crate::cli::WatchTarget) -> [&'static str; 6] {
+    use crate::cli::WatchTarget;
+    match target {
+        WatchTarget::Sockets | WatchTarget::Port => {
+            ["PROTO", "LOCAL", "REMOTE", "STATE", "PID", "PROCESS"]
+        }
+        WatchTarget::File => ["PID", "PROCESS", "USER", "FD", "TYPE", "PATH"],
+    }
+}
+
+#[cfg(feature = "watch")]
+fn clamp_selection(selected: &mut usize, len: usize) {
+    if len == 0 {
+        *selected = 0;
+    } else if *selected >= len {
+        *selected = len - 1;
+    }
+}
+
+#[cfg(feature = "watch")]
+fn terminate_pid(pid: u32) -> anyhow::Result<()> {
+    use anyhow::Context;
+
+    if pid == std::process::id() {
+        anyhow::bail!("refusing to terminate current opn process (pid {pid})");
+    }
+
+    let rc = unsafe { libc::kill(pid as i32, libc::SIGTERM) };
+    if rc == 0 {
+        Ok(())
+    } else {
+        let err = std::io::Error::last_os_error();
+        Err(err).with_context(|| format!("failed to terminate pid {pid}"))
+    }
+}
+
+#[cfg(feature = "watch")]
+fn socket_rows(entries: &[crate::model::SocketEntry]) -> Vec<WatchRow> {
     entries
         .iter()
         .map(|e| {
-            [
-                e.protocol.to_string(),
-                e.local_addr.clone(),
-                e.remote_addr.clone(),
-                e.state.clone(),
-                e.process.pid.to_string(),
-                e.process.name.clone(),
-            ]
+            WatchRow {
+                cols: [
+                    e.protocol.to_string(),
+                    e.local_addr.clone(),
+                    e.remote_addr.clone(),
+                    e.state.clone(),
+                    e.process.pid.to_string(),
+                    e.process.name.clone(),
+                ],
+                pid: e.process.pid,
+            }
         })
         .collect()
 }
 
 #[cfg(feature = "watch")]
-fn file_rows(entries: &[crate::model::OpenFile]) -> Vec<[String; 6]> {
+fn file_rows(entries: &[crate::model::OpenFile]) -> Vec<WatchRow> {
     entries
         .iter()
         .map(|e| {
-            [
-                e.process.pid.to_string(),
-                e.process.name.clone(),
-                e.process.user.clone(),
-                e.fd.to_string(),
-                e.fd_type.to_string(),
-                if e.deleted {
-                    format!("{} (deleted)", e.path)
-                } else {
-                    e.path.clone()
-                },
-            ]
+            WatchRow {
+                cols: [
+                    e.process.pid.to_string(),
+                    e.process.name.clone(),
+                    e.process.user.clone(),
+                    e.fd.to_string(),
+                    e.fd_type.to_string(),
+                    if e.deleted {
+                        format!("{} (deleted)", e.path)
+                    } else {
+                        e.path.clone()
+                    },
+                ],
+                pid: e.process.pid,
+            }
         })
         .collect()
 }
@@ -193,7 +291,7 @@ fn snapshot_rows(
     port: Option<u16>,
     file: Option<&str>,
     filter: &crate::model::QueryFilter,
-) -> anyhow::Result<Vec<[String; 6]>> {
+) -> anyhow::Result<Vec<WatchRow>> {
     use crate::cli::WatchTarget;
 
     match target {

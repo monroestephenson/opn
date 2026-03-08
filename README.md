@@ -69,7 +69,9 @@ opn port 8080 --pid 1234   # Filter by PID (`--filter-pid` alias still works)
 opn pid 1234               # Show open files for a PID
 opn deleted                # Find deleted-but-open files
 opn sockets                # List all open sockets
-opn watch                  # Requires --features watch (interactive terminal mode)
+opn watch                  # Interactive terminal mode
+opn watch --target port --port 8080
+opn watch --target file --file /tmp/demo.log
 ```
 
 ## How This Differs from lsof
@@ -96,6 +98,6 @@ opn watch                  # Requires --features watch (interactive terminal mod
 ## Known Limitations
 
 - Requires appropriate permissions to inspect other users' processes (run with `sudo` for full visibility)
-- `watch` currently monitors sockets with basic interactive controls (`q` quit, `space` pause, `s` sort)
+- `watch` controls: `j/k` or arrow keys move selection, `g/G` jump top/bottom, `x` sends SIGTERM to selected PID, `space` pause, `s` sort, `q` quit
 - Some e2e tests rely on local socket bind permissions and may skip in restricted environments
 - Race conditions with short-lived processes are handled by skipping vanished PIDs
