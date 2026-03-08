@@ -195,18 +195,23 @@ fn test_deleted_command_runs_or_returns_not_implemented() {
 }
 
 #[test]
-fn test_sockets_stub_returns_error() {
+fn test_sockets_command_runs_or_returns_not_implemented() {
     let output = opn_cmd()
-        .args(["sockets"])
+        .args(["sockets", "--json"])
         .output()
         .expect("failed to run opn");
-    assert!(!output.status.success());
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(
-        stderr.contains("not yet implemented"),
-        "Expected stub message, got: {}",
-        stderr
-    );
+    if output.status.success() {
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let parsed: serde_json::Value = serde_json::from_str(stdout.trim()).expect("invalid JSON");
+        assert!(parsed.is_array());
+    } else {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(
+            stderr.contains("not yet implemented"),
+            "Expected stub message on unsupported platform, got: {}",
+            stderr
+        );
+    }
 }
 
 #[test]
@@ -933,6 +938,61 @@ fn test_e2e_multiple_tcp_listeners_different_ports() {
 
     drop(listener1);
     drop(listener2);
+}
+
+// ============================================================
+// End-to-end: sockets listing includes active listener
+// ============================================================
+
+#[test]
+fn test_e2e_sockets_lists_own_tcp_listener() {
+    let listener = match TcpListener::bind("127.0.0.1:0") {
+        Ok(l) => l,
+        Err(e) => {
+            // Some restricted CI/sandbox setups disallow binding sockets.
+            if e.kind() == std::io::ErrorKind::PermissionDenied {
+                return;
+            }
+            panic!("failed to bind TCP listener: {}", e);
+        }
+    };
+    let port = listener.local_addr().unwrap().port();
+    let my_pid = std::process::id();
+
+    let output = opn_cmd()
+        .args(["sockets", "--json"])
+        .output()
+        .expect("failed to run opn");
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(
+            stderr.contains("not yet implemented"),
+            "Expected sockets support or explicit not-implemented. stderr={}",
+            stderr
+        );
+        return;
+    }
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let parsed: serde_json::Value = serde_json::from_str(stdout.trim()).expect("invalid JSON");
+    let arr = parsed.as_array().expect("expected array");
+    let found = arr.iter().any(|entry| {
+        entry["process"]["pid"].as_u64() == Some(my_pid as u64)
+            && entry["local_addr"]
+                .as_str()
+                .map(|a| a.ends_with(&format!(":{}", port)))
+                .unwrap_or(false)
+    });
+    assert!(
+        found,
+        "Expected sockets list to include our listener pid={} port={}. Output={}",
+        my_pid,
+        port,
+        stdout
+    );
+
+    drop(listener);
 }
 
 // ============================================================

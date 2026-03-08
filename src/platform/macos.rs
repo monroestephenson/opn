@@ -5,6 +5,125 @@ use std::path::Path;
 use crate::model::*;
 use super::Platform;
 
+// ── Raw FFI for proc_pidfdvnodeinfo (bypasses libproc 0.14 limitation) ──
+
+const PROC_PIDFDVNODEPATHINFO: libc::c_int = 2; // PIDFDInfoFlavor::VNodePathInfo
+
+#[repr(C)]
+#[derive(Copy, Clone)]
+struct vinfo_stat {
+    vst_dev: u32,
+    vst_mode: u16,
+    vst_nlink: u16,
+    vst_ino: u64,
+    vst_uid: u32,
+    vst_gid: u32,
+    vst_atime: i64,
+    vst_atimensec: i64,
+    vst_mtime: i64,
+    vst_mtimensec: i64,
+    vst_ctime: i64,
+    vst_ctimensec: i64,
+    vst_birthtime: i64,
+    vst_birthtimensec: i64,
+    vst_size: i64,
+    vst_blocks: i64,
+    vst_blksize: i32,
+    vst_flags: u32,
+    vst_gen: u32,
+    vst_rdev: u32,
+    vst_qspare: [i64; 2],
+}
+
+#[repr(C)]
+#[derive(Copy, Clone)]
+struct fsid_t {
+    val: [i32; 2],
+}
+
+#[repr(C)]
+#[derive(Copy, Clone)]
+struct vnode_info {
+    vi_stat: vinfo_stat,
+    vi_type: libc::c_int,
+    vi_pad: libc::c_int,
+    vi_fsid: fsid_t,
+}
+
+#[repr(C)]
+#[derive(Copy, Clone)]
+struct vnode_info_path {
+    vip_vi: vnode_info,
+    vip_path: [libc::c_char; 1024],
+}
+
+#[repr(C)]
+#[derive(Copy, Clone)]
+struct proc_fileinfo {
+    fi_openflags: u32,
+    fi_status: u32,
+    fi_offset: i64,
+    fi_type: i32,
+    fi_guardflags: u32,
+}
+
+#[repr(C)]
+#[derive(Copy, Clone)]
+struct vnode_fdinfowithpath {
+    pfi: proc_fileinfo,
+    pvip: vnode_info_path,
+}
+
+extern "C" {
+    fn proc_pidfdinfo(
+        pid: libc::c_int,
+        fd: libc::c_int,
+        flavor: libc::c_int,
+        buffer: *mut libc::c_void,
+        buffersize: libc::c_int,
+    ) -> libc::c_int;
+}
+
+#[derive(Debug, Clone)]
+struct VnodeFdInfo {
+    path: String,
+    nlink: u16,
+}
+
+fn parse_c_char_buf(buf: &[libc::c_char]) -> Option<String> {
+    let bytes = unsafe { std::slice::from_raw_parts(buf.as_ptr() as *const u8, buf.len()) };
+    let nul_idx = bytes.iter().position(|b| *b == 0)?;
+    if nul_idx == 0 {
+        return None;
+    }
+    Some(String::from_utf8_lossy(&bytes[..nul_idx]).into_owned())
+}
+
+/// Get vnode path metadata for an FD using raw FFI to proc_pidfdinfo.
+fn get_vnode_fd_info(pid: i32, fd: i32) -> Option<VnodeFdInfo> {
+    unsafe {
+        let mut info: vnode_fdinfowithpath = std::mem::zeroed();
+        let size = std::mem::size_of::<vnode_fdinfowithpath>() as libc::c_int;
+        let ret = proc_pidfdinfo(
+            pid,
+            fd,
+            PROC_PIDFDVNODEPATHINFO,
+            &mut info as *mut _ as *mut libc::c_void,
+            size,
+        );
+        if ret <= 0 {
+            return None;
+        }
+        let path = parse_c_char_buf(&info.pvip.vip_path)?;
+        Some(VnodeFdInfo {
+            path,
+            nlink: info.pvip.vip_vi.vi_stat.vst_nlink,
+        })
+    }
+}
+
+// ── MacOsPlatform ──
+
 pub struct MacOsPlatform;
 
 impl MacOsPlatform {
@@ -21,6 +140,105 @@ impl MacOsPlatform {
             let name = std::ffi::CStr::from_ptr((*pw).pw_name);
             name.to_string_lossy().into_owned()
         }
+    }
+
+    fn matches_process_filter(process: &ProcessInfo, filter: &QueryFilter) -> bool {
+        if let Some(filter_pid) = filter.pid {
+            if process.pid != filter_pid {
+                return false;
+            }
+        }
+        if let Some(ref user) = filter.user {
+            if &process.user != user {
+                return false;
+            }
+        }
+        if let Some(ref name) = filter.process_name {
+            if &process.name != name {
+                return false;
+            }
+        }
+        true
+    }
+
+    fn collect_sockets(&self, filter: &QueryFilter, port_filter: Option<u16>) -> Result<Vec<SocketEntry>> {
+        use netstat2::{
+            iterate_sockets_info, AddressFamilyFlags, ProtocolFlags, ProtocolSocketInfo,
+        };
+
+        let mut af_flags = AddressFamilyFlags::IPV4 | AddressFamilyFlags::IPV6;
+        if filter.ipv4 && !filter.ipv6 {
+            af_flags = AddressFamilyFlags::IPV4;
+        } else if filter.ipv6 && !filter.ipv4 {
+            af_flags = AddressFamilyFlags::IPV6;
+        }
+
+        let mut proto_flags = ProtocolFlags::TCP | ProtocolFlags::UDP;
+        if filter.tcp && !filter.udp {
+            proto_flags = ProtocolFlags::TCP;
+        } else if filter.udp && !filter.tcp {
+            proto_flags = ProtocolFlags::UDP;
+        }
+
+        let sockets = iterate_sockets_info(af_flags, proto_flags)
+            .context("Failed to iterate sockets")?;
+
+        let mut results = Vec::new();
+        for socket_result in sockets {
+            let socket = match socket_result {
+                Ok(s) => s,
+                Err(_) => continue,
+            };
+
+            let (protocol, local_addr, local_port, remote_addr, remote_port, state) =
+                match &socket.protocol_socket_info {
+                    ProtocolSocketInfo::Tcp(tcp) => (
+                        Protocol::Tcp,
+                        tcp.local_addr.to_string(),
+                        tcp.local_port,
+                        tcp.remote_addr.to_string(),
+                        tcp.remote_port,
+                        format!("{:?}", tcp.state),
+                    ),
+                    ProtocolSocketInfo::Udp(udp) => (
+                        Protocol::Udp,
+                        udp.local_addr.to_string(),
+                        udp.local_port,
+                        String::from("*"),
+                        0u16,
+                        String::from("-"),
+                    ),
+                };
+
+            if let Some(port) = port_filter {
+                if local_port != port {
+                    continue;
+                }
+            }
+
+            for pid_info in &socket.associated_pids {
+                let process = self.process_info(*pid_info).unwrap_or(ProcessInfo {
+                    pid: *pid_info,
+                    name: String::from("<unknown>"),
+                    user: String::from("<unknown>"),
+                    uid: 0,
+                    command: String::new(),
+                });
+                if !Self::matches_process_filter(&process, filter) {
+                    continue;
+                }
+
+                results.push(SocketEntry {
+                    protocol: protocol.clone(),
+                    local_addr: format!("{}:{}", local_addr, local_port),
+                    remote_addr: format!("{}:{}", remote_addr, remote_port),
+                    state: state.clone(),
+                    process,
+                });
+            }
+        }
+
+        Ok(results)
     }
 }
 
@@ -61,8 +279,7 @@ impl Platform for MacOsPlatform {
     }
 
     fn list_open_files(&self, pid: u32) -> Result<Vec<OpenFile>> {
-        use libproc::file_info::{pidfdinfo, ListFDs, ProcFDType};
-        use libproc::net_info::SocketFDInfo;
+        use libproc::file_info::{ListFDs, ProcFDType};
         use libproc::proc_pid;
 
         let process = self.process_info(pid)?;
@@ -85,19 +302,16 @@ impl Platform for MacOsPlatform {
             };
 
             let mut path = String::new();
-            let socket_info = None;
+            let mut deleted = false;
 
-            // For sockets, try to get socket info
-            if fd_type == FdType::Socket {
-                if let Ok(_sock_info) = pidfdinfo::<SocketFDInfo>(pid as i32, fd_info.proc_fd as i32) {
-                    // Socket info obtained but path not applicable
-                }
-            }
-
-            // For vnodes, we can't easily get the path from libproc 0.14
-            // without VnodeFDInfo. The pidpath gives the executable path only.
             if fd_type == FdType::RegularFile {
-                path = format!("fd:{}", fd);
+                if let Some(vnode_info) = get_vnode_fd_info(pid as i32, fd) {
+                    // st_nlink == 0 is the canonical signal for unlinked-but-open files.
+                    deleted = vnode_info.nlink == 0;
+                    path = vnode_info.path;
+                } else {
+                    path = format!("fd:{}", fd);
+                }
             }
 
             results.push(OpenFile {
@@ -105,34 +319,55 @@ impl Platform for MacOsPlatform {
                 fd,
                 fd_type,
                 path,
-                deleted: false,
-                socket_info,
+                deleted,
+                socket_info: None,
             });
         }
 
         Ok(results)
     }
 
-    fn find_by_file(&self, path: &str, _filter: &QueryFilter) -> Result<Vec<OpenFile>> {
-        // On macOS without VnodeFDInfo, we use lsof-style approach via
-        // checking /dev/fd or using a different strategy.
-        // For now, we scan all processes' pidpath to find matches.
+    fn find_by_file(&self, path: &str, filter: &QueryFilter) -> Result<Vec<OpenFile>> {
+        use libproc::file_info::{ListFDs, ProcFDType};
+        use libproc::proc_pid;
+
         let canonical = std::fs::canonicalize(path)
             .unwrap_or_else(|_| Path::new(path).to_path_buf());
         let canonical_str = canonical.to_string_lossy().to_string();
 
         let pids = self.list_pids(&QueryFilter::default())?;
 
-        // Check pidpath for each process — this only finds executables, not all open files
         let results: Vec<OpenFile> = pids.par_iter()
-            .filter_map(|&pid| {
-                use libproc::proc_pid;
-                let proc_path = proc_pid::pidpath(pid as i32).ok()?;
-                if let Ok(proc_canonical) = std::fs::canonicalize(&proc_path) {
-                    if proc_canonical.to_string_lossy() == canonical_str {
-                        let process = self.process_info(pid).ok()?;
-                        return Some(OpenFile {
-                            process,
+            .flat_map(|&pid| {
+                // Apply filters
+                if let Some(filter_pid) = filter.pid {
+                    if pid != filter_pid { return vec![]; }
+                }
+
+                let process = match self.process_info(pid) {
+                    Ok(p) => p,
+                    Err(_) => return vec![],
+                };
+
+                if let Some(ref user) = filter.user {
+                    if &process.user != user { return vec![]; }
+                }
+                if let Some(ref name) = filter.process_name {
+                    if &process.name != name { return vec![]; }
+                }
+
+                let mut matches = Vec::new();
+
+                // Keep executable-path matching behavior for macOS parity.
+                if let Ok(proc_path) = proc_pid::pidpath(pid as i32) {
+                    let exec_matches = if let Ok(exec_canonical) = std::fs::canonicalize(&proc_path) {
+                        exec_canonical.to_string_lossy() == canonical_str
+                    } else {
+                        proc_path == canonical_str
+                    };
+                    if exec_matches {
+                        matches.push(OpenFile {
+                            process: process.clone(),
                             fd: -1,
                             fd_type: FdType::RegularFile,
                             path: proc_path,
@@ -141,98 +376,97 @@ impl Platform for MacOsPlatform {
                         });
                     }
                 }
-                None
+
+                let fd_list = proc_pid::listpidinfo::<ListFDs>(pid as i32, 256)
+                    .unwrap_or_default();
+
+                for fd_info in &fd_list {
+                    if fd_info.proc_fdtype != ProcFDType::VNode as u32 {
+                        continue;
+                    }
+                    if let Some(vnode_info) = get_vnode_fd_info(pid as i32, fd_info.proc_fd as i32) {
+                        let matches_path = if let Ok(vnode_canonical) = std::fs::canonicalize(&vnode_info.path) {
+                            vnode_canonical.to_string_lossy() == canonical_str
+                        } else {
+                            vnode_info.path == canonical_str
+                        };
+
+                        if matches_path {
+                            matches.push(OpenFile {
+                                process: process.clone(),
+                                fd: fd_info.proc_fd as i32,
+                                fd_type: FdType::RegularFile,
+                                path: vnode_info.path,
+                                deleted: vnode_info.nlink == 0,
+                                socket_info: None,
+                            });
+                        }
+                    }
+                }
+                matches
             })
             .collect();
-
-        if results.is_empty() {
-            eprintln!("Note: On macOS, file lookup is limited to process executables.");
-            eprintln!("For full open file tracking, consider using `lsof` as a fallback.");
-        }
 
         Ok(results)
     }
 
     fn find_by_port(&self, port: u16, filter: &QueryFilter) -> Result<Vec<SocketEntry>> {
-        use netstat2::{
-            iterate_sockets_info, AddressFamilyFlags, ProtocolFlags, ProtocolSocketInfo,
-        };
+        self.collect_sockets(filter, Some(port))
+    }
 
-        let mut af_flags = AddressFamilyFlags::IPV4 | AddressFamilyFlags::IPV6;
-        if filter.ipv4 && !filter.ipv6 {
-            af_flags = AddressFamilyFlags::IPV4;
-        } else if filter.ipv6 && !filter.ipv4 {
-            af_flags = AddressFamilyFlags::IPV6;
-        }
+    fn list_sockets(&self, filter: &QueryFilter) -> Result<Vec<SocketEntry>> {
+        self.collect_sockets(filter, None)
+    }
 
-        let mut proto_flags = ProtocolFlags::TCP | ProtocolFlags::UDP;
-        if filter.tcp && !filter.udp {
-            proto_flags = ProtocolFlags::TCP;
-        } else if filter.udp && !filter.tcp {
-            proto_flags = ProtocolFlags::UDP;
-        }
+    fn find_deleted(&self, filter: &QueryFilter) -> Result<Vec<OpenFile>> {
+        use libproc::file_info::{ListFDs, ProcFDType};
+        use libproc::proc_pid;
 
-        let sockets = iterate_sockets_info(af_flags, proto_flags)
-            .context("Failed to iterate sockets")?;
+        let pids = self.list_pids(&QueryFilter::default())?;
 
-        let mut results = Vec::new();
-        for socket_result in sockets {
-            let socket = match socket_result {
-                Ok(s) => s,
-                Err(_) => continue,
-            };
-
-            let (protocol, local_addr, local_port, remote_addr, remote_port, state) = match &socket.protocol_socket_info {
-                ProtocolSocketInfo::Tcp(tcp) => {
-                    (Protocol::Tcp,
-                     tcp.local_addr.to_string(),
-                     tcp.local_port,
-                     tcp.remote_addr.to_string(),
-                     tcp.remote_port,
-                     format!("{:?}", tcp.state))
+        let results: Vec<OpenFile> = pids.par_iter()
+            .flat_map(|&pid| {
+                if let Some(filter_pid) = filter.pid {
+                    if pid != filter_pid { return vec![]; }
                 }
-                ProtocolSocketInfo::Udp(udp) => {
-                    (Protocol::Udp,
-                     udp.local_addr.to_string(),
-                     udp.local_port,
-                     String::from("*"),
-                     0u16,
-                     String::from("-"))
+
+                let process = match self.process_info(pid) {
+                    Ok(p) => p,
+                    Err(_) => return vec![],
+                };
+
+                if let Some(ref user) = filter.user {
+                    if &process.user != user { return vec![]; }
                 }
-            };
+                if let Some(ref name) = filter.process_name {
+                    if &process.name != name { return vec![]; }
+                }
 
-            if local_port != port {
-                continue;
-            }
+                let fd_list = proc_pid::listpidinfo::<ListFDs>(pid as i32, 256)
+                    .unwrap_or_default();
 
-            for pid_info in &socket.associated_pids {
-                let process = self.process_info(*pid_info)
-                    .unwrap_or(ProcessInfo {
-                        pid: *pid_info,
-                        name: String::from("<unknown>"),
-                        user: String::from("<unknown>"),
-                        uid: 0,
-                        command: String::new(),
-                    });
-
-                results.push(SocketEntry {
-                    protocol: protocol.clone(),
-                    local_addr: format!("{}:{}", local_addr, local_port),
-                    remote_addr: format!("{}:{}", remote_addr, remote_port),
-                    state: state.clone(),
-                    process,
-                });
-            }
-        }
+                let mut deleted_files = Vec::new();
+                for fd_info in &fd_list {
+                    if fd_info.proc_fdtype != ProcFDType::VNode as u32 {
+                        continue;
+                    }
+                    if let Some(vnode_info) = get_vnode_fd_info(pid as i32, fd_info.proc_fd as i32) {
+                        if vnode_info.nlink == 0 {
+                            deleted_files.push(OpenFile {
+                                process: process.clone(),
+                                fd: fd_info.proc_fd as i32,
+                                fd_type: FdType::RegularFile,
+                                path: vnode_info.path,
+                                deleted: true,
+                                socket_info: None,
+                            });
+                        }
+                    }
+                }
+                deleted_files
+            })
+            .collect();
 
         Ok(results)
-    }
-
-    fn list_sockets(&self, _filter: &QueryFilter) -> Result<Vec<SocketEntry>> {
-        anyhow::bail!("opn sockets: not yet implemented")
-    }
-
-    fn find_deleted(&self, _filter: &QueryFilter) -> Result<Vec<OpenFile>> {
-        anyhow::bail!("opn deleted: not yet implemented")
     }
 }

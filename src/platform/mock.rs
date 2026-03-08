@@ -98,7 +98,7 @@ impl Platform for MockPlatform {
     }
 
     fn list_sockets(&self, _filter: &QueryFilter) -> Result<Vec<SocketEntry>> {
-        bail!("opn sockets: not yet implemented")
+        Ok(self.sockets.clone())
     }
 
     fn find_deleted(&self, filter: &QueryFilter) -> Result<Vec<OpenFile>> {

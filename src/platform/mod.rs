@@ -188,7 +188,8 @@ mod tests {
     fn test_mock_platform_stubs_return_errors() {
         let mock = MockPlatform::empty();
         let filter = QueryFilter::default();
-        assert!(mock.list_sockets(&filter).is_err());
+        let sockets = mock.list_sockets(&filter).unwrap();
+        assert!(sockets.is_empty());
     }
 
     #[test]
