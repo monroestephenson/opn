@@ -93,20 +93,34 @@ fn main() -> ExitCode {
             let qf = QueryFilter::from(filter);
             commands::sockets::run(&platform, &qf, cli.json)
         }
-        Command::Watch { filter } => {
+        Command::Watch {
+            target,
+            port,
+            file,
+            interval,
+            filter,
+        } => {
             #[cfg(feature = "watch")]
             {
                 let qf = QueryFilter::from(filter);
-                match watch::run(&platform, &qf, cli.json) {
+                match watch::run(
+                    &platform,
+                    *target,
+                    *port,
+                    file.as_deref(),
+                    *interval,
+                    &qf,
+                    cli.json,
+                ) {
                     Ok(_) => Ok(RenderOutcome::HasResults),
                     Err(e) => Err(e),
                 }
             }
             #[cfg(not(feature = "watch"))]
             {
-                let _ = filter;
+                let _ = (target, port, file, interval, filter);
                 Err(anyhow::anyhow!(
-                    "opn watch requires the 'watch' feature. Rebuild with: cargo build --features watch"
+                    "opn watch is unavailable in this build (missing 'watch' feature). Rebuild with: cargo build --features watch"
                 ))
             }
         }

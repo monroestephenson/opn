@@ -28,4 +28,5 @@ version = "0.29"
 optional = true
 
 [features]
+default = ["watch"]
 watch = ["dep:crossterm", "dep:ratatui"]

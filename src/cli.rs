@@ -1,4 +1,4 @@
-use clap::{Parser, Subcommand};
+use clap::{Parser, Subcommand, ValueEnum};
 
 use crate::model::QueryFilter;
 
@@ -58,11 +58,34 @@ pub enum Command {
         filter: FilterArgs,
     },
 
-    /// Watch open files/sockets in real time (requires --features watch)
+    /// Watch open files/sockets in real time
     Watch {
+        /// Watch target type
+        #[arg(long, value_enum, default_value_t = WatchTarget::Sockets)]
+        target: WatchTarget,
+
+        /// Port to watch (required when --target port)
+        #[arg(long)]
+        port: Option<u16>,
+
+        /// File path to watch (required when --target file)
+        #[arg(long)]
+        file: Option<String>,
+
+        /// Refresh interval in seconds
+        #[arg(long, default_value_t = 2, value_parser = clap::value_parser!(u64).range(1..=60))]
+        interval: u64,
+
         #[command(flatten)]
         filter: FilterArgs,
     },
+}
+
+#[derive(Debug, Clone, Copy, ValueEnum, PartialEq, Eq)]
+pub enum WatchTarget {
+    Sockets,
+    Port,
+    File,
 }
 
 #[derive(Parser, Debug, Clone)]
