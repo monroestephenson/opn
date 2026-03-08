@@ -64,6 +64,10 @@ pub enum Command {
         #[arg(long, value_enum, default_value_t = WatchTarget::Sockets)]
         target: WatchTarget,
 
+        /// Color theme for watch mode.
+        #[arg(long, value_enum, default_value_t = WatchTheme::Everforest)]
+        theme: WatchTheme,
+
         /// Port to watch (required with `--target port`).
         #[arg(long)]
         port: Option<u16>,
@@ -86,6 +90,27 @@ pub enum WatchTarget {
     Sockets,
     Port,
     File,
+}
+
+#[derive(Debug, Clone, Copy, ValueEnum, PartialEq, Eq)]
+pub enum WatchTheme {
+    CatppuccinLatte,
+    Catppuccin,
+    Ethereal,
+    Everforest,
+    FlexokiLight,
+    Gruvbox,
+    Hackerman,
+    Kanagawa,
+    MatteBlack,
+    Miasma,
+    Nord,
+    OsakaJade,
+    Ristretto,
+    RosePine,
+    TokyoNight,
+    Vantablack,
+    White,
 }
 
 #[derive(Parser, Debug, Clone)]

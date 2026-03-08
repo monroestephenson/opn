@@ -1,7 +1,11 @@
 #[cfg(feature = "watch")]
+use ratatui::style::{Color, Modifier, Style};
+
+#[cfg(feature = "watch")]
 pub fn run(
     platform: &dyn crate::platform::Platform,
     target: crate::cli::WatchTarget,
+    theme: crate::cli::WatchTheme,
     port: Option<u16>,
     file: Option<&str>,
     interval_secs: u64,
@@ -17,7 +21,6 @@ pub fn run(
     };
     use ratatui::backend::CrosstermBackend;
     use ratatui::layout::{Constraint, Direction, Layout};
-    use ratatui::style::{Modifier, Style};
     use ratatui::widgets::{Block, Borders, Cell, Paragraph, Row, Table, TableState};
     use ratatui::Terminal;
     use std::io::stdout;
@@ -76,6 +79,7 @@ pub fn run(
     };
     let headers = headers_for(target);
     let show_socket_totals = matches!(target, WatchTarget::Sockets | WatchTarget::Port);
+    let palette = theme_palette(theme);
 
     let result: anyhow::Result<()> = (|| loop {
         rows.sort_by(|a, b| match sort_key {
@@ -114,10 +118,12 @@ pub fn run(
             } else {
                 format!("{status} | {status_msg}")
             };
-            frame.render_widget(Paragraph::new(full_status), chunks[0]);
+            frame.render_widget(
+                Paragraph::new(full_status).style(status_bar_style(paused, &palette)),
+                chunks[0],
+            );
 
-            let header = Row::new(headers)
-                .style(Style::default().add_modifier(Modifier::BOLD));
+            let header = Row::new(headers).style(header_style(&palette));
             let rows_view = rows.iter().map(|e| {
                 Row::new(vec![
                     Cell::from(e.cols[0].clone()),
@@ -127,6 +133,7 @@ pub fn run(
                     Cell::from(e.cols[4].clone()),
                     Cell::from(e.cols[5].clone()),
                 ])
+                .style(row_style(e, target, &palette))
             });
             let table = Table::new(
                 rows_view,
@@ -140,8 +147,14 @@ pub fn run(
                 ],
             )
             .header(header)
-            .block(Block::default().borders(Borders::ALL).title(title))
-            .row_highlight_style(Style::default().add_modifier(Modifier::REVERSED));
+            .block(
+                Block::default()
+                    .borders(Borders::ALL)
+                    .title(title)
+                    .style(block_style(&palette)),
+            )
+            .row_highlight_style(selected_row_style(&palette))
+            .highlight_symbol(">> ");
             frame.render_stateful_widget(table, chunks[1], &mut table_state);
         })?;
 
@@ -303,6 +316,340 @@ fn file_rows(entries: &[crate::model::OpenFile]) -> Vec<WatchRow> {
             pid: e.process.pid,
         })
         .collect()
+}
+
+#[cfg(feature = "watch")]
+#[derive(Clone, Copy)]
+struct ThemePalette {
+    status_running: Color,
+    status_paused: Color,
+    header: Color,
+    border: Color,
+    selected_fg: Color,
+    selected_bg: Color,
+    listen: Color,
+    established: Color,
+    wait: Color,
+    udp: Color,
+    normal: Color,
+    deleted: Color,
+}
+
+#[cfg(feature = "watch")]
+fn theme_palette(theme: crate::cli::WatchTheme) -> ThemePalette {
+    use crate::cli::WatchTheme;
+    match theme {
+        WatchTheme::CatppuccinLatte => ThemePalette {
+            status_running: Color::Rgb(30, 102, 245),
+            status_paused: Color::Rgb(223, 142, 29),
+            header: Color::Rgb(4, 165, 229),
+            border: Color::Rgb(124, 127, 147),
+            selected_fg: Color::Rgb(76, 79, 105),
+            selected_bg: Color::Rgb(204, 208, 218),
+            listen: Color::Rgb(64, 160, 43),
+            established: Color::Rgb(30, 102, 245),
+            wait: Color::Rgb(223, 142, 29),
+            udp: Color::Rgb(234, 118, 203),
+            normal: Color::Rgb(76, 79, 105),
+            deleted: Color::Rgb(210, 15, 57),
+        },
+        WatchTheme::Catppuccin => ThemePalette {
+            status_running: Color::Rgb(137, 180, 250),
+            status_paused: Color::Rgb(249, 226, 175),
+            header: Color::Rgb(116, 199, 236),
+            border: Color::Rgb(88, 91, 112),
+            selected_fg: Color::Rgb(17, 17, 27),
+            selected_bg: Color::Rgb(166, 173, 200),
+            listen: Color::Rgb(166, 227, 161),
+            established: Color::Rgb(137, 180, 250),
+            wait: Color::Rgb(249, 226, 175),
+            udp: Color::Rgb(245, 194, 231),
+            normal: Color::Rgb(205, 214, 244),
+            deleted: Color::Rgb(243, 139, 168),
+        },
+        WatchTheme::Ethereal => ThemePalette {
+            status_running: Color::Rgb(164, 196, 255),
+            status_paused: Color::Rgb(245, 215, 155),
+            header: Color::Rgb(168, 224, 204),
+            border: Color::Rgb(96, 110, 140),
+            selected_fg: Color::Rgb(232, 237, 255),
+            selected_bg: Color::Rgb(67, 77, 102),
+            listen: Color::Rgb(176, 220, 170),
+            established: Color::Rgb(155, 195, 255),
+            wait: Color::Rgb(236, 203, 140),
+            udp: Color::Rgb(213, 178, 235),
+            normal: Color::Rgb(214, 220, 235),
+            deleted: Color::Rgb(235, 149, 167),
+        },
+        WatchTheme::Everforest => ThemePalette {
+            status_running: Color::Rgb(167, 192, 128),
+            status_paused: Color::Rgb(230, 195, 132),
+            header: Color::Rgb(127, 187, 179),
+            border: Color::Rgb(75, 85, 90),
+            selected_fg: Color::Rgb(220, 215, 186),
+            selected_bg: Color::Rgb(58, 68, 58),
+            listen: Color::Rgb(167, 192, 128),
+            established: Color::Rgb(127, 187, 179),
+            wait: Color::Rgb(219, 188, 127),
+            udp: Color::Rgb(214, 153, 182),
+            normal: Color::Rgb(211, 198, 170),
+            deleted: Color::Rgb(230, 126, 128),
+        },
+        WatchTheme::FlexokiLight => ThemePalette {
+            status_running: Color::Rgb(32, 94, 166),
+            status_paused: Color::Rgb(188, 110, 0),
+            header: Color::Rgb(36, 131, 123),
+            border: Color::Rgb(148, 132, 113),
+            selected_fg: Color::Rgb(16, 15, 15),
+            selected_bg: Color::Rgb(230, 220, 202),
+            listen: Color::Rgb(102, 128, 11),
+            established: Color::Rgb(32, 94, 166),
+            wait: Color::Rgb(188, 110, 0),
+            udp: Color::Rgb(160, 47, 111),
+            normal: Color::Rgb(16, 15, 15),
+            deleted: Color::Rgb(175, 48, 41),
+        },
+        WatchTheme::Gruvbox => ThemePalette {
+            status_running: Color::Rgb(184, 187, 38),
+            status_paused: Color::Rgb(250, 189, 47),
+            header: Color::Rgb(131, 165, 152),
+            border: Color::Rgb(102, 92, 84),
+            selected_fg: Color::Rgb(235, 219, 178),
+            selected_bg: Color::Rgb(60, 56, 54),
+            listen: Color::Rgb(184, 187, 38),
+            established: Color::Rgb(131, 165, 152),
+            wait: Color::Rgb(250, 189, 47),
+            udp: Color::Rgb(211, 134, 155),
+            normal: Color::Rgb(213, 196, 161),
+            deleted: Color::Rgb(251, 73, 52),
+        },
+        WatchTheme::Hackerman => ThemePalette {
+            status_running: Color::Rgb(126, 255, 126),
+            status_paused: Color::Rgb(190, 255, 126),
+            header: Color::Rgb(112, 235, 112),
+            border: Color::Rgb(52, 95, 52),
+            selected_fg: Color::Rgb(190, 255, 170),
+            selected_bg: Color::Rgb(22, 44, 22),
+            listen: Color::Rgb(126, 255, 126),
+            established: Color::Rgb(90, 220, 150),
+            wait: Color::Rgb(190, 220, 110),
+            udp: Color::Rgb(150, 205, 135),
+            normal: Color::Rgb(120, 195, 120),
+            deleted: Color::Rgb(240, 110, 110),
+        },
+        WatchTheme::Kanagawa => ThemePalette {
+            status_running: Color::Rgb(152, 187, 215),
+            status_paused: Color::Rgb(223, 188, 118),
+            header: Color::Rgb(126, 156, 216),
+            border: Color::Rgb(84, 92, 126),
+            selected_fg: Color::Rgb(223, 223, 212),
+            selected_bg: Color::Rgb(54, 63, 84),
+            listen: Color::Rgb(152, 187, 108),
+            established: Color::Rgb(126, 156, 216),
+            wait: Color::Rgb(223, 188, 118),
+            udp: Color::Rgb(149, 127, 184),
+            normal: Color::Rgb(201, 206, 219),
+            deleted: Color::Rgb(228, 104, 118),
+        },
+        WatchTheme::MatteBlack => ThemePalette {
+            status_running: Color::Rgb(170, 178, 189),
+            status_paused: Color::Rgb(208, 162, 109),
+            header: Color::Rgb(131, 146, 168),
+            border: Color::Rgb(70, 74, 82),
+            selected_fg: Color::Rgb(223, 226, 230),
+            selected_bg: Color::Rgb(44, 47, 54),
+            listen: Color::Rgb(143, 187, 129),
+            established: Color::Rgb(131, 146, 168),
+            wait: Color::Rgb(208, 162, 109),
+            udp: Color::Rgb(173, 142, 181),
+            normal: Color::Rgb(185, 189, 198),
+            deleted: Color::Rgb(221, 97, 97),
+        },
+        WatchTheme::Miasma => ThemePalette {
+            status_running: Color::Rgb(152, 170, 98),
+            status_paused: Color::Rgb(198, 163, 94),
+            header: Color::Rgb(124, 153, 143),
+            border: Color::Rgb(93, 86, 77),
+            selected_fg: Color::Rgb(205, 196, 169),
+            selected_bg: Color::Rgb(63, 58, 52),
+            listen: Color::Rgb(152, 170, 98),
+            established: Color::Rgb(124, 153, 143),
+            wait: Color::Rgb(198, 163, 94),
+            udp: Color::Rgb(174, 133, 150),
+            normal: Color::Rgb(190, 179, 151),
+            deleted: Color::Rgb(198, 107, 97),
+        },
+        WatchTheme::Nord => ThemePalette {
+            status_running: Color::Rgb(136, 192, 208),
+            status_paused: Color::Rgb(235, 203, 139),
+            header: Color::Rgb(129, 161, 193),
+            border: Color::Rgb(76, 86, 106),
+            selected_fg: Color::Rgb(236, 239, 244),
+            selected_bg: Color::Rgb(59, 66, 82),
+            listen: Color::Rgb(163, 190, 140),
+            established: Color::Rgb(129, 161, 193),
+            wait: Color::Rgb(235, 203, 139),
+            udp: Color::Rgb(180, 142, 173),
+            normal: Color::Rgb(216, 222, 233),
+            deleted: Color::Rgb(191, 97, 106),
+        },
+        WatchTheme::OsakaJade => ThemePalette {
+            status_running: Color::Rgb(120, 176, 154),
+            status_paused: Color::Rgb(216, 182, 116),
+            header: Color::Rgb(109, 173, 162),
+            border: Color::Rgb(70, 95, 95),
+            selected_fg: Color::Rgb(214, 226, 218),
+            selected_bg: Color::Rgb(46, 70, 67),
+            listen: Color::Rgb(138, 184, 123),
+            established: Color::Rgb(109, 173, 162),
+            wait: Color::Rgb(216, 182, 116),
+            udp: Color::Rgb(183, 144, 171),
+            normal: Color::Rgb(188, 205, 196),
+            deleted: Color::Rgb(217, 112, 118),
+        },
+        WatchTheme::Ristretto => ThemePalette {
+            status_running: Color::Rgb(150, 178, 132),
+            status_paused: Color::Rgb(212, 169, 111),
+            header: Color::Rgb(128, 162, 184),
+            border: Color::Rgb(88, 76, 73),
+            selected_fg: Color::Rgb(226, 214, 205),
+            selected_bg: Color::Rgb(63, 53, 50),
+            listen: Color::Rgb(150, 178, 132),
+            established: Color::Rgb(128, 162, 184),
+            wait: Color::Rgb(212, 169, 111),
+            udp: Color::Rgb(186, 138, 170),
+            normal: Color::Rgb(204, 190, 180),
+            deleted: Color::Rgb(215, 108, 108),
+        },
+        WatchTheme::RosePine => ThemePalette {
+            status_running: Color::Rgb(156, 207, 216),
+            status_paused: Color::Rgb(246, 193, 119),
+            header: Color::Rgb(196, 167, 231),
+            border: Color::Rgb(82, 79, 103),
+            selected_fg: Color::Rgb(224, 222, 244),
+            selected_bg: Color::Rgb(57, 53, 82),
+            listen: Color::Rgb(156, 207, 216),
+            established: Color::Rgb(196, 167, 231),
+            wait: Color::Rgb(246, 193, 119),
+            udp: Color::Rgb(234, 154, 151),
+            normal: Color::Rgb(224, 222, 244),
+            deleted: Color::Rgb(235, 111, 146),
+        },
+        WatchTheme::TokyoNight => ThemePalette {
+            status_running: Color::Rgb(125, 207, 255),
+            status_paused: Color::Rgb(224, 175, 104),
+            header: Color::Rgb(187, 154, 247),
+            border: Color::Rgb(65, 72, 104),
+            selected_fg: Color::Rgb(192, 202, 245),
+            selected_bg: Color::Rgb(41, 46, 66),
+            listen: Color::Rgb(158, 206, 106),
+            established: Color::Rgb(125, 207, 255),
+            wait: Color::Rgb(224, 175, 104),
+            udp: Color::Rgb(187, 154, 247),
+            normal: Color::Rgb(169, 177, 214),
+            deleted: Color::Rgb(247, 118, 142),
+        },
+        WatchTheme::Vantablack => ThemePalette {
+            status_running: Color::Rgb(165, 190, 165),
+            status_paused: Color::Rgb(198, 176, 131),
+            header: Color::Rgb(145, 170, 190),
+            border: Color::Rgb(58, 58, 58),
+            selected_fg: Color::Rgb(220, 220, 220),
+            selected_bg: Color::Rgb(34, 34, 34),
+            listen: Color::Rgb(145, 190, 145),
+            established: Color::Rgb(145, 170, 190),
+            wait: Color::Rgb(198, 176, 131),
+            udp: Color::Rgb(175, 150, 180),
+            normal: Color::Rgb(185, 185, 185),
+            deleted: Color::Rgb(210, 112, 112),
+        },
+        WatchTheme::White => ThemePalette {
+            status_running: Color::Rgb(34, 97, 162),
+            status_paused: Color::Rgb(170, 110, 20),
+            header: Color::Rgb(26, 119, 116),
+            border: Color::Rgb(162, 166, 172),
+            selected_fg: Color::Rgb(24, 24, 24),
+            selected_bg: Color::Rgb(225, 225, 225),
+            listen: Color::Rgb(64, 140, 47),
+            established: Color::Rgb(34, 97, 162),
+            wait: Color::Rgb(170, 110, 20),
+            udp: Color::Rgb(162, 85, 135),
+            normal: Color::Rgb(24, 24, 24),
+            deleted: Color::Rgb(180, 38, 38),
+        },
+    }
+}
+
+#[cfg(feature = "watch")]
+fn status_bar_style(paused: bool, p: &ThemePalette) -> Style {
+    let fg = if paused {
+        p.status_paused
+    } else {
+        p.status_running
+    };
+    Style::default().fg(fg).add_modifier(Modifier::BOLD)
+}
+
+#[cfg(feature = "watch")]
+fn header_style(p: &ThemePalette) -> Style {
+    Style::default().fg(p.header).add_modifier(Modifier::BOLD)
+}
+
+#[cfg(feature = "watch")]
+fn block_style(p: &ThemePalette) -> Style {
+    Style::default().fg(p.border)
+}
+
+#[cfg(feature = "watch")]
+fn selected_row_style(p: &ThemePalette) -> Style {
+    Style::default()
+        .fg(p.selected_fg)
+        .bg(p.selected_bg)
+        .add_modifier(Modifier::BOLD)
+}
+
+#[cfg(feature = "watch")]
+fn row_style(row: &WatchRow, target: crate::cli::WatchTarget, p: &ThemePalette) -> Style {
+    use crate::cli::WatchTarget;
+    match target {
+        WatchTarget::Sockets | WatchTarget::Port => socket_row_style(row, p),
+        WatchTarget::File => file_row_style(row, p),
+    }
+}
+
+#[cfg(feature = "watch")]
+fn socket_row_style(row: &WatchRow, p: &ThemePalette) -> Style {
+    let proto = row.cols[0].as_str();
+    let state = row.cols[3].as_str();
+    if state.eq_ignore_ascii_case("LISTEN") {
+        return Style::default().fg(p.listen);
+    }
+    if state.eq_ignore_ascii_case("ESTABLISHED") {
+        return Style::default().fg(p.established);
+    }
+    if state.eq_ignore_ascii_case("TIME_WAIT") || state.eq_ignore_ascii_case("CLOSE_WAIT") {
+        return Style::default().fg(p.wait);
+    }
+    if proto.eq_ignore_ascii_case("UDP") {
+        return Style::default().fg(p.udp);
+    }
+    Style::default().fg(p.normal)
+}
+
+#[cfg(feature = "watch")]
+fn file_row_style(row: &WatchRow, p: &ThemePalette) -> Style {
+    let fd_type = row.cols[4].as_str();
+    let path = row.cols[5].as_str();
+    if path.ends_with("(deleted)") {
+        return Style::default().fg(p.deleted);
+    }
+    if fd_type.eq_ignore_ascii_case("SOCK") {
+        return Style::default().fg(p.established);
+    }
+    if fd_type.eq_ignore_ascii_case("PIPE") {
+        return Style::default().fg(p.wait);
+    }
+    Style::default().fg(p.normal)
 }
 
 #[cfg(feature = "watch")]

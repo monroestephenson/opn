@@ -128,6 +128,7 @@ fn main() -> ExitCode {
         }
         Command::Watch {
             target,
+            theme,
             port,
             file,
             interval,
@@ -139,6 +140,7 @@ fn main() -> ExitCode {
                 match watch::run(
                     &platform,
                     *target,
+                    *theme,
                     *port,
                     file.as_deref(),
                     *interval,
@@ -151,7 +153,7 @@ fn main() -> ExitCode {
             }
             #[cfg(not(feature = "watch"))]
             {
-                let _ = (target, port, file, interval, filter);
+                let _ = (target, theme, port, file, interval, filter);
                 Err(anyhow::anyhow!(
                     "opn watch is unavailable in this build (missing 'watch' feature). Rebuild with: cargo build --features watch"
                 ))
