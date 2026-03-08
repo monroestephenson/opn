@@ -64,7 +64,7 @@
 - [x] Support watching ports, files, or all sockets (`--target`)
 - [x] Keyboard controls: quit (q), pause (space), sort columns
 - [x] Vim/arrow navigation and row selection (`j/k`, up/down, `g/G`)
-- [x] Terminate selected process from watch (`x` sends SIGTERM)
+- [x] Terminate selected process from watch (`x` opens confirm dialog; `y/Enter` confirms, `n/Esc` cancels)
 
 ## Improvements & Polish
 
@@ -72,7 +72,7 @@
 - [ ] Add `--no-header` flag to suppress table headers (for scripting)
 - [ ] Add `--count` flag to just print the number of matches
 - [ ] Add `--wide` flag to show full command line instead of truncated process name
-- [ ] Colorized output (red for CLOSE_WAIT, green for LISTEN, etc.)
+- [x] Colorized output (red for CLOSE_WAIT, green for LISTEN, etc.)
 - [ ] Add shell completions generation (`opn completions bash/zsh/fish`)
 - [ ] `opn port` without argument lists all listening ports
 - [ ] Support port ranges (`opn port 8000-9000`)
@@ -137,6 +137,8 @@
 - [x] GitHub Actions CI workflow (test on Linux + macOS)
 - [x] Release workflow with prebuilt binaries (`.github/workflows/release.yml`, 4 targets)
 - [x] Homebrew formula (`brew tap monroestephenson/tap && brew install opn`)
+- [x] Auto-tag release from Cargo version on `main`
+- [x] Auto-update Homebrew tap formula on tag release
 - [ ] AUR package
 - [ ] Publish to crates.io
 - [ ] Nix flake
@@ -150,7 +152,7 @@
 ---
 
 ## Known Issues
-1. `watch` uses SIGTERM on `x` with no confirmation prompt (intentionally fast, but easy to misfire)
+1. ~~`watch` uses SIGTERM on `x` with no confirmation prompt (intentionally fast, but easy to misfire)~~ (resolved: `x` now prompts for confirmation)
 2. `--filter-pid` is retained as an alias for compatibility; canonical flag is `--pid`
 3. vnode path lookup may still fail for some FDs and returns `<path unavailable>`
 4. ~~JSON errors have categories/codes but no stable versioned schema contract yet~~ (resolved: v1.0 schema pinned with 45 compat tests)
