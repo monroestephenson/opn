@@ -3,6 +3,7 @@ use anyhow::Result;
 use crate::model::{QueryFilter, SocketEntry};
 use crate::platform::Platform;
 use crate::render;
+use crate::render::RenderOutcome;
 use crate::render::table::Tabular;
 
 impl Tabular for SocketEntry {
@@ -22,8 +23,12 @@ impl Tabular for SocketEntry {
     }
 }
 
-pub fn run(platform: &dyn Platform, port: u16, filter: &QueryFilter, json: bool) -> Result<()> {
+pub fn run(
+    platform: &dyn Platform,
+    port: u16,
+    filter: &QueryFilter,
+    json: bool,
+) -> Result<RenderOutcome> {
     let entries = platform.find_by_port(port, filter)?;
-    render::render(&entries, json);
-    Ok(())
+    Ok(render::render(&entries, json))
 }

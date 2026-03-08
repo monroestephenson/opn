@@ -4,12 +4,48 @@
 use std::fs;
 use std::io::Write;
 use std::net::{TcpListener, UdpSocket};
-use std::process::Command;
+use std::process::{Command, Output};
 
 fn opn_cmd() -> Command {
     let mut cmd = Command::new(env!("CARGO_BIN_EXE_opn"));
     cmd.env("NO_COLOR", "1");
     cmd
+}
+
+fn bind_tcp_local() -> Option<TcpListener> {
+    match TcpListener::bind("127.0.0.1:0") {
+        Ok(l) => Some(l),
+        Err(e) if e.kind() == std::io::ErrorKind::PermissionDenied => None,
+        Err(e) => panic!("failed to bind TCP listener: {}", e),
+    }
+}
+
+fn bind_udp_local() -> Option<UdpSocket> {
+    match UdpSocket::bind("127.0.0.1:0") {
+        Ok(s) => Some(s),
+        Err(e) if e.kind() == std::io::ErrorKind::PermissionDenied => None,
+        Err(e) => panic!("failed to bind UDP socket: {}", e),
+    }
+}
+
+fn assert_non_error_exit(output: &Output) {
+    let code = output.status.code().unwrap_or(-1);
+    assert!(
+        code == 0 || code == 1,
+        "Expected non-error exit code (0/1), got {}. stderr={}",
+        code,
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+fn tmp_path_aliases(path: &str) -> Vec<String> {
+    let mut aliases = vec![path.to_string()];
+    if let Some(rest) = path.strip_prefix("/tmp/") {
+        aliases.push(format!("/private/tmp/{}", rest));
+    } else if let Some(rest) = path.strip_prefix("/private/tmp/") {
+        aliases.push(format!("/tmp/{}", rest));
+    }
+    aliases
 }
 
 // ============================================================
@@ -404,8 +440,7 @@ fn test_filter_pid_flag() {
         .args(["port", "19", "--filter-pid", "1"])
         .output()
         .expect("failed to run opn");
-    // Should not crash
-    assert!(output.status.success());
+    assert_non_error_exit(&output);
 }
 
 #[test]
@@ -414,7 +449,7 @@ fn test_filter_user_flag() {
         .args(["port", "19", "--user", "root"])
         .output()
         .expect("failed to run opn");
-    assert!(output.status.success());
+    assert_non_error_exit(&output);
 }
 
 #[test]
@@ -423,7 +458,7 @@ fn test_filter_process_flag() {
         .args(["port", "19", "--process", "sshd"])
         .output()
         .expect("failed to run opn");
-    assert!(output.status.success());
+    assert_non_error_exit(&output);
 }
 
 #[test]
@@ -432,7 +467,7 @@ fn test_filter_all_flag() {
         .args(["port", "19", "--all"])
         .output()
         .expect("failed to run opn");
-    assert!(output.status.success());
+    assert_non_error_exit(&output);
 }
 
 #[test]
@@ -441,7 +476,7 @@ fn test_short_flags() {
         .args(["port", "19", "-a", "-u", "root", "-p", "sshd"])
         .output()
         .expect("failed to run opn");
-    assert!(output.status.success());
+    assert_non_error_exit(&output);
 }
 
 // ============================================================
@@ -499,7 +534,9 @@ fn test_file_symlink() {
 #[test]
 fn test_e2e_tcp_listener_found_by_port() {
     // Bind to port 0 to get a random available port
-    let listener = TcpListener::bind("127.0.0.1:0").expect("failed to bind TCP listener");
+    let Some(listener) = bind_tcp_local() else {
+        return;
+    };
     let port = listener.local_addr().unwrap().port();
     let my_pid = std::process::id();
 
@@ -561,7 +598,9 @@ fn test_e2e_tcp_listener_found_by_port() {
 
 #[test]
 fn test_e2e_tcp_listener_table_output() {
-    let listener = TcpListener::bind("127.0.0.1:0").expect("failed to bind TCP listener");
+    let Some(listener) = bind_tcp_local() else {
+        return;
+    };
     let port = listener.local_addr().unwrap().port();
 
     let output = opn_cmd()
@@ -595,7 +634,9 @@ fn test_e2e_tcp_listener_table_output() {
 
 #[test]
 fn test_e2e_tcp_listener_with_tcp_filter() {
-    let listener = TcpListener::bind("127.0.0.1:0").expect("failed to bind TCP listener");
+    let Some(listener) = bind_tcp_local() else {
+        return;
+    };
     let port = listener.local_addr().unwrap().port();
 
     // With --tcp filter, should still find it
@@ -632,7 +673,9 @@ fn test_e2e_tcp_listener_with_tcp_filter() {
 fn test_e2e_tcp_listener_closed_port_not_found() {
     // Bind, get the port, then drop the listener
     let port = {
-        let listener = TcpListener::bind("127.0.0.1:0").expect("failed to bind TCP listener");
+        let Some(listener) = bind_tcp_local() else {
+            return;
+        };
         let port = listener.local_addr().unwrap().port();
         drop(listener); // Close the socket
         port
@@ -661,7 +704,9 @@ fn test_e2e_tcp_listener_closed_port_not_found() {
 
 #[test]
 fn test_e2e_udp_socket_found_by_port() {
-    let socket = UdpSocket::bind("127.0.0.1:0").expect("failed to bind UDP socket");
+    let Some(socket) = bind_udp_local() else {
+        return;
+    };
     let port = socket.local_addr().unwrap().port();
     let my_pid = std::process::id();
 
@@ -709,7 +754,9 @@ fn test_e2e_udp_socket_found_by_port() {
 
 #[test]
 fn test_e2e_udp_socket_with_udp_filter() {
-    let socket = UdpSocket::bind("127.0.0.1:0").expect("failed to bind UDP socket");
+    let Some(socket) = bind_udp_local() else {
+        return;
+    };
     let port = socket.local_addr().unwrap().port();
 
     // With --udp filter, should find it
@@ -748,12 +795,17 @@ fn test_e2e_udp_socket_with_udp_filter() {
 
 #[test]
 fn test_e2e_tcp_and_udp_same_port() {
-    let tcp_listener = TcpListener::bind("127.0.0.1:0").expect("failed to bind TCP listener");
+    let Some(tcp_listener) = bind_tcp_local() else {
+        return;
+    };
     let port = tcp_listener.local_addr().unwrap().port();
 
     // Bind UDP to the same port (TCP and UDP namespaces are separate)
-    let udp_socket = UdpSocket::bind(format!("127.0.0.1:{}", port))
-        .expect("failed to bind UDP socket to same port");
+    let udp_socket = match UdpSocket::bind(format!("127.0.0.1:{}", port)) {
+        Ok(s) => s,
+        Err(e) if e.kind() == std::io::ErrorKind::PermissionDenied => return,
+        Err(e) => panic!("failed to bind UDP socket to same port: {}", e),
+    };
 
     let output = opn_cmd()
         .args(["port", &port.to_string(), "--json"])
@@ -826,7 +878,9 @@ fn test_e2e_pid_finds_own_open_files() {
 
 #[test]
 fn test_e2e_port_json_schema() {
-    let listener = TcpListener::bind("127.0.0.1:0").expect("failed to bind TCP listener");
+    let Some(listener) = bind_tcp_local() else {
+        return;
+    };
     let port = listener.local_addr().unwrap().port();
 
     let output = opn_cmd()
@@ -901,10 +955,14 @@ fn test_e2e_pid_json_schema() {
 
 #[test]
 fn test_e2e_multiple_tcp_listeners_different_ports() {
-    let listener1 = TcpListener::bind("127.0.0.1:0").expect("failed to bind listener 1");
+    let Some(listener1) = bind_tcp_local() else {
+        return;
+    };
     let port1 = listener1.local_addr().unwrap().port();
 
-    let listener2 = TcpListener::bind("127.0.0.1:0").expect("failed to bind listener 2");
+    let Some(listener2) = bind_tcp_local() else {
+        return;
+    };
     let port2 = listener2.local_addr().unwrap().port();
 
     // port1 should find listener1 but not listener2
@@ -946,15 +1004,8 @@ fn test_e2e_multiple_tcp_listeners_different_ports() {
 
 #[test]
 fn test_e2e_sockets_lists_own_tcp_listener() {
-    let listener = match TcpListener::bind("127.0.0.1:0") {
-        Ok(l) => l,
-        Err(e) => {
-            // Some restricted CI/sandbox setups disallow binding sockets.
-            if e.kind() == std::io::ErrorKind::PermissionDenied {
-                return;
-            }
-            panic!("failed to bind TCP listener: {}", e);
-        }
+    let Some(listener) = bind_tcp_local() else {
+        return;
     };
     let port = listener.local_addr().unwrap().port();
     let my_pid = std::process::id();
@@ -1002,7 +1053,9 @@ fn test_e2e_sockets_lists_own_tcp_listener() {
 #[test]
 fn test_e2e_pid_shows_open_tcp_socket() {
     // Open a TCP listener, then use opn pid to verify the socket FD appears
-    let listener = TcpListener::bind("127.0.0.1:0").expect("failed to bind");
+    let Some(listener) = bind_tcp_local() else {
+        return;
+    };
     let my_pid = std::process::id();
 
     let output = opn_cmd()
@@ -1456,7 +1509,9 @@ fn test_e2e_pid_shows_open_file_handle() {
 
 #[test]
 fn test_e2e_port_shows_correct_process_name() {
-    let listener = TcpListener::bind("127.0.0.1:0").expect("failed to bind");
+    let Some(listener) = bind_tcp_local() else {
+        return;
+    };
     let port = listener.local_addr().unwrap().port();
 
     let output = opn_cmd()
@@ -1492,4 +1547,106 @@ fn test_e2e_port_shows_correct_process_name() {
     );
 
     drop(listener);
+}
+
+// ============================================================
+// macOS-specific FFI path/deleted behavior
+// ============================================================
+
+#[cfg(target_os = "macos")]
+#[test]
+fn test_macos_vnode_path_resolution_for_pid() {
+    let tmp_path = format!("/tmp/opn_macos_vnode_path_{}", std::process::id());
+    let mut f = fs::File::create(&tmp_path).expect("failed to create temp file");
+    f.write_all(b"macos-vnode-path").expect("failed to write temp file");
+    let _held = fs::File::open(&tmp_path).expect("failed to reopen temp file");
+
+    let output = opn_cmd()
+        .args(["pid", &std::process::id().to_string(), "--json"])
+        .output()
+        .expect("failed to run opn");
+    assert_non_error_exit(&output);
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let parsed: serde_json::Value = serde_json::from_str(stdout.trim()).expect("invalid JSON");
+    let arr = parsed.as_array().expect("expected array");
+    let aliases = tmp_path_aliases(&tmp_path);
+    let found = arr.iter().any(|entry| {
+        entry["path"]
+            .as_str()
+            .map(|p| aliases.iter().any(|a| a == p))
+            .unwrap_or(false)
+    });
+    assert!(
+        found,
+        "Expected pid output to include vnode path '{}'. Output={}",
+        tmp_path,
+        stdout
+    );
+
+    drop(_held);
+    fs::remove_file(&tmp_path).ok();
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+fn test_macos_deleted_detects_unlinked_open_file() {
+    let tmp_path = format!("/tmp/opn_macos_deleted_{}", std::process::id());
+    let mut created = fs::File::create(&tmp_path).expect("failed to create temp file");
+    created
+        .write_all(b"macos-deleted-detection")
+        .expect("failed to write");
+    let held = fs::File::open(&tmp_path).expect("failed to open temp file");
+    fs::remove_file(&tmp_path).expect("failed to unlink temp file");
+
+    let mut found = false;
+    let aliases = tmp_path_aliases(&tmp_path);
+    for _ in 0..10 {
+        let output = opn_cmd()
+            .args([
+                "deleted",
+                "--filter-pid",
+                &std::process::id().to_string(),
+                "--json",
+            ])
+            .output()
+            .expect("failed to run opn");
+        assert_non_error_exit(&output);
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let parsed: serde_json::Value =
+            serde_json::from_str(stdout.trim()).expect("invalid JSON");
+        let arr = parsed.as_array().expect("expected array");
+        found = arr.iter().any(|entry| {
+            entry["path"]
+                .as_str()
+                .map(|p| aliases.iter().any(|a| a == p))
+                .unwrap_or(false)
+                && entry["deleted"].as_bool().unwrap_or(false)
+        });
+        if found {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(50));
+    }
+    assert!(
+        found,
+        "Expected deleted output to include unlinked open file '{}'",
+        tmp_path
+    );
+
+    drop(held);
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+fn test_macos_deleted_restricted_pid_nonfatal() {
+    let output = opn_cmd()
+        .args(["deleted", "--filter-pid", "1", "--json"])
+        .output()
+        .expect("failed to run opn");
+    assert_non_error_exit(&output);
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let parsed: serde_json::Value = serde_json::from_str(stdout.trim()).expect("invalid JSON");
+    assert!(parsed.is_array());
 }

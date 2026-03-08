@@ -27,7 +27,7 @@
 - [x] Linux: `list_open_files()` (fd symlink reading + classification)
 - [x] Linux: `find_by_file()` (canonicalized path matching)
 - [x] Permission error handling (skip with stderr warning)
-- [ ] macOS: Per-FD file path resolution (needs `libproc` upgrade or FFI bindings for `proc_pidfdvnodeinfo`)
+- [x] macOS: Per-FD file path resolution (`proc_pidfdinfo` FFI + vnode path info)
 
 ## Phase 4: PID Inspection (`opn pid <pid>`)
 - [x] Implement `commands/pid.rs` — list all open files/sockets for a given PID
@@ -38,16 +38,16 @@
 
 ## Phase 5: Deleted Files (`opn deleted`)
 - [x] Linux: Scan `/proc/*/fd/` for symlinks ending in `(deleted)`
-- [~] macOS: Investigate feasibility (no direct equivalent)
-- [~] Table output: PID, process, user, path, size (if available)
+- [x] macOS: Implement via vnode FD info (`st_nlink == 0`)
+- [~] Table output: PID, process, user, path, size (if available; size pending)
 - [x] Filter by user/process name
 
 ## Phase 6: Socket Listing (`opn sockets`)
-- [ ] Linux: Parse all of `/proc/net/{tcp,tcp6,udp,udp6}`, resolve inodes to PIDs
-- [ ] macOS: Use `netstat2::iterate_sockets_info()` (no port filter)
-- [ ] Filter flags: `--tcp`, `--udp`, `--ipv4`, `--ipv6`, `--state LISTEN`
+- [x] Linux: Parse all of `/proc/net/{tcp,tcp6,udp,udp6}`, resolve inodes to PIDs
+- [x] macOS: Use `netstat2::iterate_sockets_info()` (no port filter)
+- [~] Filter flags: `--tcp`, `--udp`, `--ipv4`, `--ipv6`, `--state LISTEN` (`--state` pending)
 - [ ] Sort output by protocol, then port
-- [ ] JSON output
+- [x] JSON output
 
 ## Phase 7: Watch Mode (`opn watch`)
 - [ ] Feature-gated behind `watch` Cargo feature
@@ -70,7 +70,7 @@
 - [ ] Support multiple ports (`opn port 80,443,8080`)
 
 ### Platform
-- [ ] macOS: Upgrade `libproc` or add raw FFI for `proc_pidfdvnodeinfo` to get per-FD file paths
+- [x] macOS: Raw FFI for vnode path resolution (`proc_pidfdinfo` flavor 2)
 - [ ] macOS: Get actual UID for `find_by_file` results (currently using pidpath approach)
 - [ ] Linux: Use `rayon` for parallel PID scanning in `find_by_port()`
 - [ ] Linux: Handle `/proc` permission errors more gracefully with `--all` flag
@@ -78,10 +78,10 @@
 - [ ] Windows platform support (via `windows-sys` crate)
 
 ### Performance
-- [ ] Cache `process_info()` lookups when scanning all PIDs (avoid repeated reads)
+- [~] Cache `process_info()`/prefilter when scanning all PIDs (additional tuning pending)
 - [ ] Lazy process info resolution (only fetch user/command when needed for display)
 - [ ] Benchmark against `lsof` and `ss` on large PID counts
-- [ ] Pre-filter PIDs by UID before scanning FDs (when `--user` is set)
+- [x] Pre-filter PIDs by UID/name before scanning FDs on Linux (`--user`, `--process`)
 
 ### Output & Rendering
 - [ ] TSV output mode (`--tsv`)
@@ -93,7 +93,7 @@
 
 ### Error Handling
 - [ ] Distinguish between "no results" and "permission denied" in exit codes
-- [ ] Exit code 1 for "no results found", 2 for errors
+- [x] Exit code 1 for "no results found", 2 for errors
 - [ ] Structured error output in JSON mode (`{"error": "..."}`)
 - [ ] `--verbose` flag for debug-level logging to stderr
 
@@ -108,6 +108,8 @@
 - [x] Table output formatting tests
 - [x] PID command tests (own process, nonexistent PID, filters)
 - [x] Deleted command tests (mock platform)
+- [x] macOS-specific tests for vnode path and deleted detection (including restricted PID behavior)
+- [x] Env-sensitive socket e2e tests skip cleanly when bind is not permitted
 - [ ] Cross-platform CI (Linux + macOS)
 - [ ] Benchmark tests
 
@@ -136,8 +138,8 @@
 ---
 
 ## Known Issues
-1. `opn file` on macOS only matches process executables, not all open file descriptors
+1. `opn watch` remains unimplemented (feature-gated stub)
 2. `--filter-pid` flag name is awkward (workaround for clap conflict with `pid` subcommand positional arg)
 3. Dead code warnings for Linux-only `net.rs` functions when building on macOS
-4. `list_open_files` on macOS shows `fd:N` placeholder paths instead of real file paths
-5. No exit code distinction between "no results" and "error"
+4. `list_open_files` may still show `fd:N` placeholder when vnode metadata lookup fails
+5. No structured JSON error payloads yet (errors are plain stderr text)

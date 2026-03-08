@@ -52,12 +52,13 @@ opn port 443 --ipv4        # IPv4 only
 opn port 443 --ipv6        # IPv6 only
 ```
 
-### Stub commands (not yet implemented)
+### Other commands
 
 ```bash
-opn pid 1234               # Show open files for PID
-opn deleted                 # Find deleted files still open
-opn sockets                 # List all open sockets
+opn pid 1234               # Show open files for a PID
+opn deleted                # Find deleted-but-open files
+opn sockets                # List all open sockets
+opn watch                  # Requires --features watch (still not implemented)
 ```
 
 ## How This Differs from lsof
@@ -75,9 +76,15 @@ opn sockets                 # List all open sockets
 - **macOS**: Uses `libproc` for process enumeration and `netstat2` for socket info
 - **Linux**: Reads directly from `/proc` filesystem
 
+## Exit Codes
+
+- `0`: Command executed and returned one or more results
+- `1`: Command executed successfully but returned no results
+- `2`: Command failed (invalid args/runtime/platform error)
+
 ## Known Limitations
 
 - Requires appropriate permissions to inspect other users' processes (run with `sudo` for full visibility)
-- macOS `file` subcommand is limited to matching process executables (no per-FD file path resolution in `libproc` 0.14)
-- `pid`, `deleted`, `sockets`, and `watch` subcommands are stubs
+- `watch` subcommand is still a stub
+- Some e2e tests rely on local socket bind permissions and may skip in restricted environments
 - Race conditions with short-lived processes are handled by skipping vanished PIDs

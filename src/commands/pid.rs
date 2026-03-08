@@ -3,6 +3,7 @@ use anyhow::{Context, Result};
 use crate::model::{OpenFile, QueryFilter};
 use crate::platform::Platform;
 use crate::render;
+use crate::render::RenderOutcome;
 
 fn matches_pid_filters(entry: &OpenFile, filter: &QueryFilter) -> bool {
     if let Some(filter_pid) = filter.pid {
@@ -23,7 +24,12 @@ fn matches_pid_filters(entry: &OpenFile, filter: &QueryFilter) -> bool {
     true
 }
 
-pub fn run(platform: &dyn Platform, pid: u32, filter: &QueryFilter, json: bool) -> Result<()> {
+pub fn run(
+    platform: &dyn Platform,
+    pid: u32,
+    filter: &QueryFilter,
+    json: bool,
+) -> Result<RenderOutcome> {
     // Existence check first to return a clear error for invalid PIDs.
     let known_pids = platform.list_pids(&QueryFilter::default())?;
     if !known_pids.contains(&pid) {
@@ -35,8 +41,7 @@ pub fn run(platform: &dyn Platform, pid: u32, filter: &QueryFilter, json: bool) 
         .with_context(|| format!("Failed to inspect open files for PID {}", pid))?;
     entries.retain(|entry| matches_pid_filters(entry, filter));
 
-    render::render(&entries, json);
-    Ok(())
+    Ok(render::render(&entries, json))
 }
 
 #[cfg(test)]

@@ -243,10 +243,13 @@ impl MacOsPlatform {
 }
 
 impl Platform for MacOsPlatform {
-    fn list_pids(&self, _filter: &QueryFilter) -> Result<Vec<u32>> {
+    fn list_pids(&self, filter: &QueryFilter) -> Result<Vec<u32>> {
         use libproc::processes::{pids_by_type, ProcFilter};
-        let pids = pids_by_type(ProcFilter::All)
+        let mut pids = pids_by_type(ProcFilter::All)
             .context("Failed to enumerate processes")?;
+        if let Some(pid) = filter.pid {
+            pids.retain(|p| *p == pid);
+        }
         Ok(pids)
     }
 

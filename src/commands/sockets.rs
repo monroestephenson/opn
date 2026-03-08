@@ -3,11 +3,11 @@ use anyhow::Result;
 use crate::model::QueryFilter;
 use crate::platform::Platform;
 use crate::render;
+use crate::render::RenderOutcome;
 
-pub fn run(platform: &dyn Platform, filter: &QueryFilter, json: bool) -> Result<()> {
+pub fn run(platform: &dyn Platform, filter: &QueryFilter, json: bool) -> Result<RenderOutcome> {
     let entries = platform.list_sockets(filter)?;
-    render::render(&entries, json);
-    Ok(())
+    Ok(render::render(&entries, json))
 }
 
 #[cfg(test)]

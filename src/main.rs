@@ -6,18 +6,19 @@ mod platform;
 mod render;
 mod watch;
 
-use anyhow::Result;
 use clap::Parser;
+use std::process::ExitCode;
 
 use cli::{Cli, Command};
 use model::QueryFilter;
 use platform::create_platform;
+use render::RenderOutcome;
 
-fn main() -> Result<()> {
+fn main() -> ExitCode {
     let cli = Cli::parse();
     let platform = create_platform();
 
-    match &cli.command {
+    let result = match &cli.command {
         Command::Port { port, filter } => {
             let qf = QueryFilter::from(filter);
             commands::port::run(&platform, *port, &qf, cli.json)
@@ -41,12 +42,26 @@ fn main() -> Result<()> {
         Command::Watch { .. } => {
             #[cfg(feature = "watch")]
             {
-                watch::run()
+                match watch::run() {
+                    Ok(_) => Ok(RenderOutcome::HasResults),
+                    Err(e) => Err(e),
+                }
             }
             #[cfg(not(feature = "watch"))]
             {
-                anyhow::bail!("opn watch requires the 'watch' feature. Rebuild with: cargo build --features watch")
+                Err(anyhow::anyhow!(
+                    "opn watch requires the 'watch' feature. Rebuild with: cargo build --features watch"
+                ))
             }
+        }
+    };
+
+    match result {
+        Ok(RenderOutcome::HasResults) => ExitCode::from(0),
+        Ok(RenderOutcome::NoResults) => ExitCode::from(1),
+        Err(err) => {
+            eprintln!("{err}");
+            ExitCode::from(2)
         }
     }
 }

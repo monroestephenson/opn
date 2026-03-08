@@ -38,6 +38,11 @@ impl LinuxPlatform {
         None
     }
 
+    fn read_proc_name(pid: u32) -> Option<String> {
+        let comm = fs::read_to_string(format!("/proc/{}/comm", pid)).ok()?;
+        Some(comm.trim().to_string())
+    }
+
     fn classify_fd_target(target: &str) -> FdType {
         if target.starts_with("socket:[") {
             FdType::Socket
@@ -212,6 +217,25 @@ impl Platform for LinuxPlatform {
                 if let Ok(pid) = name.parse::<u32>() {
                     if let Some(filter_pid) = filter.pid {
                         if pid != filter_pid {
+                            continue;
+                        }
+                    }
+                    if let Some(filter_user) = &filter.user {
+                        let uid = match Self::read_proc_uid(pid) {
+                            Some(v) => v,
+                            None => continue,
+                        };
+                        let user = Self::uid_to_username(uid);
+                        if &user != filter_user {
+                            continue;
+                        }
+                    }
+                    if let Some(filter_process) = &filter.process_name {
+                        let proc_name = match Self::read_proc_name(pid) {
+                            Some(v) => v,
+                            None => continue,
+                        };
+                        if &proc_name != filter_process {
                             continue;
                         }
                     }

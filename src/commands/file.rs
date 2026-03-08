@@ -3,6 +3,7 @@ use anyhow::Result;
 use crate::model::{OpenFile, QueryFilter};
 use crate::platform::Platform;
 use crate::render;
+use crate::render::RenderOutcome;
 use crate::render::table::Tabular;
 
 impl Tabular for OpenFile {
@@ -27,8 +28,12 @@ impl Tabular for OpenFile {
     }
 }
 
-pub fn run(platform: &dyn Platform, path: &str, filter: &QueryFilter, json: bool) -> Result<()> {
+pub fn run(
+    platform: &dyn Platform,
+    path: &str,
+    filter: &QueryFilter,
+    json: bool,
+) -> Result<RenderOutcome> {
     let entries = platform.find_by_file(path, filter)?;
-    render::render(&entries, json);
-    Ok(())
+    Ok(render::render(&entries, json))
 }
