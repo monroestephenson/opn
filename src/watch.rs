@@ -2,15 +2,21 @@
 use ratatui::style::{Color, Modifier, Style};
 
 #[cfg(feature = "watch")]
+#[derive(Clone, Copy)]
+pub struct WatchRunOptions<'a> {
+    pub target: crate::cli::WatchTarget,
+    pub theme: crate::cli::WatchTheme,
+    pub port: Option<u16>,
+    pub file: Option<&'a str>,
+    pub interval_secs: u64,
+    pub filter: &'a crate::model::QueryFilter,
+    pub as_json: bool,
+}
+
+#[cfg(feature = "watch")]
 pub fn run(
     platform: &dyn crate::platform::Platform,
-    target: crate::cli::WatchTarget,
-    theme: crate::cli::WatchTheme,
-    port: Option<u16>,
-    file: Option<&str>,
-    interval_secs: u64,
-    filter: &crate::model::QueryFilter,
-    as_json: bool,
+    opts: WatchRunOptions<'_>,
 ) -> anyhow::Result<()> {
     use crate::cli::WatchTarget;
     use anyhow::Context;
@@ -25,6 +31,16 @@ pub fn run(
     use ratatui::Terminal;
     use std::io::stdout;
     use std::time::{Duration, Instant};
+
+    let WatchRunOptions {
+        target,
+        theme,
+        port,
+        file,
+        interval_secs,
+        filter,
+        as_json,
+    } = opts;
 
     if as_json {
         anyhow::bail!("watch mode does not support --json");

@@ -139,13 +139,15 @@ fn main() -> ExitCode {
                 let qf = QueryFilter::from(filter);
                 match watch::run(
                     &platform,
-                    *target,
-                    *theme,
-                    *port,
-                    file.as_deref(),
-                    *interval,
-                    &qf,
-                    cli.json,
+                    watch::WatchRunOptions {
+                        target: *target,
+                        theme: *theme,
+                        port: *port,
+                        file: file.as_deref(),
+                        interval_secs: *interval,
+                        filter: &qf,
+                        as_json: cli.json,
+                    },
                 ) {
                     Ok(_) => Ok(RenderOutcome::HasResults),
                     Err(e) => Err(e),
