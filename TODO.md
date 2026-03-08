@@ -6,11 +6,11 @@
 - [x] Done
 
 ## Urgent (Production Readiness)
-- [ ] Freeze and version JSON schema contracts (results + errors), then add schema-compat tests
-- [ ] Define and enforce permission/partial-visibility semantics (output + exit behavior)
-- [ ] Add release pipeline for tagged builds with artifacts, checksums, and notes
-- [ ] Add Homebrew tap/formula and smoke-test install path
-- [ ] Add benchmark suite + baseline comparisons vs `lsof`/`ss` on realistic process/socket loads
+- [x] Freeze and version JSON schema contracts (results + errors), then add schema-compat tests
+- [x] Define and enforce permission/partial-visibility semantics (output + exit behavior)
+- [x] Add release pipeline for tagged builds with artifacts, checksums, and notes
+- [x] Add Homebrew tap/formula and smoke-test install path
+- [x] Add benchmark suite + baseline comparisons vs `lsof`/`ss` on realistic process/socket loads
 
 ---
 
@@ -89,7 +89,7 @@
 ### Performance
 - [~] Cache `process_info()`/prefilter when scanning all PIDs (additional tuning pending)
 - [ ] Lazy process info resolution (only fetch user/command when needed for display)
-- [ ] Benchmark against `lsof` and `ss` on large PID counts
+- [x] Benchmark against `lsof` and `ss` on large PID counts (opn is 7-10x faster)
 - [x] Pre-filter PIDs by UID/name before scanning FDs on Linux (`--user`, `--process`)
 
 ### Output & Rendering
@@ -101,7 +101,8 @@
 - [ ] Truncate long paths with ellipsis in table mode
 
 ### Error Handling
-- [ ] Distinguish between "no results" and "permission denied" in exit codes
+- [x] Distinguish between "no results" and "permission denied" in exit codes (0/1/2)
+- [x] Warn on `--all` without root (partial-visibility stderr warning)
 - [x] Exit code 1 for "no results found", 2 for errors
 - [x] Structured error output in JSON mode (`{"error":{"code","category","message"}}`)
 - [ ] `--verbose` flag for debug-level logging to stderr
@@ -114,26 +115,28 @@
 - [x] Integration tests with real TCP/UDP listeners (e2e port lookup, protocol filters, closed port)
 - [x] CLI argument parsing tests (valid and invalid inputs, 33 tests)
 - [x] JSON output schema validation tests (port + pid schemas)
+- [x] JSON v1 schema compat tests (45 tests in `tests/schema_compat.rs`)
 - [x] Table output formatting tests
 - [x] PID command tests (own process, nonexistent PID, filters)
 - [x] Deleted command tests (mock platform)
 - [x] macOS-specific tests for vnode path and deleted detection (including restricted PID behavior)
 - [x] Env-sensitive socket e2e tests skip cleanly when bind is not permitted
 - [x] Cross-platform CI (Linux + macOS)
-- [ ] Benchmark tests
+- [x] Benchmark tests (criterion suite in `benches/platform_bench.rs`)
 
 ### Documentation
 - [x] README with usage examples
 - [ ] `--help` text review and polish for all subcommands
 - [ ] Man page generation
 - [ ] CHANGELOG.md
+- [x] RELEASE.md (release process docs)
 - [ ] Contributing guide
 - [ ] Architecture doc explaining platform abstraction
 
 ### Packaging & Distribution
 - [x] GitHub Actions CI workflow (test on Linux + macOS)
-- [ ] Release workflow with prebuilt binaries (**urgent**)
-- [ ] Homebrew formula (**urgent**)
+- [x] Release workflow with prebuilt binaries (`.github/workflows/release.yml`, 4 targets)
+- [x] Homebrew formula (`brew tap monroestephenson/tap && brew install opn`)
 - [ ] AUR package
 - [ ] Publish to crates.io
 - [ ] Nix flake
@@ -150,5 +153,5 @@
 1. `watch` uses SIGTERM on `x` with no confirmation prompt (intentionally fast, but easy to misfire)
 2. `--filter-pid` is retained as an alias for compatibility; canonical flag is `--pid`
 3. vnode path lookup may still fail for some FDs and returns `<path unavailable>`
-4. JSON errors have categories/codes but no stable versioned schema contract yet
+4. ~~JSON errors have categories/codes but no stable versioned schema contract yet~~ (resolved: v1.0 schema pinned with 45 compat tests)
 5. Socket list output is not yet sorted by a user-selectable CLI sort flag

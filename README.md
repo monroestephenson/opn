@@ -86,19 +86,24 @@ opn watch --target file --file /tmp/demo.log
 
 ## Quick Benchmark
 
-Local macOS snapshot using `hyperfine -N --warmup 20`:
+Replicated locally on macOS with `hyperfine -N --warmup 20 --runs 200`:
 
 | Scenario | Relative result (`opn` vs `lsof`) |
 |---------|------------------------------------|
-| `opn port 8080 --json` vs `lsof -i :8080 -P -n` | `3.11x` faster |
-| `opn port 8080` vs `lsof -i :8080 -P -n` | `3.20x` faster |
-| `opn sockets` vs `lsof -i -P -n` | `2.86x` faster |
-| `opn sockets --json` vs `lsof -i -P -n` | `2.92x` faster |
-| `opn pid <small pid>` vs `lsof -p <pid>` | roughly parity |
-| `opn pid <FD-heavy pid>` vs `lsof -p <pid>` | `3.06x` faster |
-| `opn deleted` vs `lsof +L1` | `12.13x` faster |
+| `opn port 8080 --json` vs `lsof -i :8080 -P -n` | `3.63x` faster |
+| `opn port 8080` vs `lsof -i :8080 -P -n` | `3.58x` faster |
+| `opn sockets` vs `lsof -i -P -n` | `1.72x` faster |
+| `opn sockets --json` vs `lsof -i -P -n` | `1.83x` faster |
+| `opn pid <small pid>` vs `lsof -p <pid>` | `1.08x` faster (near parity) |
+| `opn pid <FD-heavy pid>` vs `lsof -p <pid>` | `3.46x` faster |
+| `opn deleted` vs `lsof +L1` | `5.99x` faster |
 
-FD-heavy PID benchmark setup used:
+PIDs used in this run:
+
+- `small pid`: `11588`
+- `FD-heavy pid`: `46254`
+
+FD-heavy PID selection and benchmark setup:
 
 ```bash
 PID=$(
@@ -116,7 +121,7 @@ hyperfine -N --warmup 20 --runs 200 \
   "lsof -p $PID"
 ```
 
-Results vary by OS, permissions, and workload size.
+Results vary by OS, permissions, workload size, and background system activity. Some scenarios showed statistical outliers during this run.
 
 ## Platform Support
 
