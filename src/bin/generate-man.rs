@@ -1,9 +1,9 @@
 #![allow(dead_code)]
 
-#[path = "../model.rs"]
-mod model;
 #[path = "../cli.rs"]
 mod cli;
+#[path = "../model.rs"]
+mod model;
 
 use clap::CommandFactory;
 use std::fs;
