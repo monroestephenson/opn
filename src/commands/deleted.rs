@@ -15,17 +15,18 @@ mod tests {
     use super::*;
     use crate::model::{FdType, OpenFile, ProcessInfo};
     use crate::platform::mock::MockPlatform;
+    use std::sync::Arc;
 
     fn make_deleted_file(pid: u32, user: &str, process_name: &str, path: &str) -> OpenFile {
         OpenFile {
-            process: ProcessInfo {
+            process: Arc::new(ProcessInfo {
                 pid,
                 name: process_name.to_string(),
                 user: user.to_string(),
                 uid: 1000,
                 command: format!("/usr/bin/{}", process_name),
-            },
-            fd: 7,
+            }),
+            fd: Some(7),
             fd_type: FdType::RegularFile,
             path: path.to_string(),
             deleted: true,

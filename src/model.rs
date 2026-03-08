@@ -1,4 +1,5 @@
 use serde::Serialize;
+use std::sync::Arc;
 
 #[derive(Debug, Clone, Serialize)]
 pub struct ProcessInfo {
@@ -11,8 +12,9 @@ pub struct ProcessInfo {
 
 #[derive(Debug, Clone, Serialize)]
 pub struct OpenFile {
-    pub process: ProcessInfo,
-    pub fd: i32,
+    pub process: Arc<ProcessInfo>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub fd: Option<i32>,
     pub fd_type: FdType,
     pub path: String,
     pub deleted: bool,
@@ -49,7 +51,7 @@ pub struct SocketEntry {
     pub local_addr: String,
     pub remote_addr: String,
     pub state: String,
-    pub process: ProcessInfo,
+    pub process: Arc<ProcessInfo>,
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq)]
@@ -197,13 +199,13 @@ mod tests {
             local_addr: "127.0.0.1:80".to_string(),
             remote_addr: "0.0.0.0:0".to_string(),
             state: "LISTEN".to_string(),
-            process: ProcessInfo {
+            process: Arc::new(ProcessInfo {
                 pid: 1,
                 name: "nginx".to_string(),
                 user: "www".to_string(),
                 uid: 33,
                 command: "/usr/sbin/nginx".to_string(),
-            },
+            }),
         };
         let json = serde_json::to_string(&s).unwrap();
         assert!(json.contains("\"protocol\":\"Tcp\""));
@@ -214,14 +216,14 @@ mod tests {
     #[test]
     fn test_open_file_serialize_without_socket_info() {
         let f = OpenFile {
-            process: ProcessInfo {
+            process: Arc::new(ProcessInfo {
                 pid: 42,
                 name: "vim".to_string(),
                 user: "user".to_string(),
                 uid: 1000,
                 command: "/usr/bin/vim".to_string(),
-            },
-            fd: 3,
+            }),
+            fd: Some(3),
             fd_type: FdType::RegularFile,
             path: "/tmp/test.txt".to_string(),
             deleted: false,
@@ -233,19 +235,25 @@ mod tests {
         assert!(json.contains("\"deleted\":false"));
         // socket_info should be absent (skip_serializing_if)
         assert!(!json.contains("socket_info"));
+
+        // fd: None should be omitted
+        let f2 = OpenFile { fd: None, ..f };
+        let json2 = serde_json::to_string(&f2).unwrap();
+        assert!(!json2.contains("\"fd\""));
     }
 
     #[test]
     fn test_open_file_serialize_with_socket_info() {
+        let proc_info = Arc::new(ProcessInfo {
+            pid: 42,
+            name: "curl".to_string(),
+            user: "user".to_string(),
+            uid: 1000,
+            command: "/usr/bin/curl".to_string(),
+        });
         let f = OpenFile {
-            process: ProcessInfo {
-                pid: 42,
-                name: "curl".to_string(),
-                user: "user".to_string(),
-                uid: 1000,
-                command: "/usr/bin/curl".to_string(),
-            },
-            fd: 5,
+            process: proc_info.clone(),
+            fd: Some(5),
             fd_type: FdType::Socket,
             path: String::new(),
             deleted: false,
@@ -254,13 +262,7 @@ mod tests {
                 local_addr: "0.0.0.0:12345".to_string(),
                 remote_addr: "93.184.216.34:443".to_string(),
                 state: "ESTABLISHED".to_string(),
-                process: ProcessInfo {
-                    pid: 42,
-                    name: "curl".to_string(),
-                    user: "user".to_string(),
-                    uid: 1000,
-                    command: "/usr/bin/curl".to_string(),
-                },
+                process: proc_info,
             }),
         };
         let json = serde_json::to_string(&f).unwrap();
@@ -271,14 +273,14 @@ mod tests {
     #[test]
     fn test_open_file_deleted_serialize() {
         let f = OpenFile {
-            process: ProcessInfo {
+            process: Arc::new(ProcessInfo {
                 pid: 99,
                 name: "app".to_string(),
                 user: "root".to_string(),
                 uid: 0,
                 command: "/opt/app".to_string(),
-            },
-            fd: 7,
+            }),
+            fd: Some(7),
             fd_type: FdType::RegularFile,
             path: "/tmp/deleted_file.log".to_string(),
             deleted: true,
@@ -329,13 +331,13 @@ mod tests {
             local_addr: "0.0.0.0:53".to_string(),
             remote_addr: "*:0".to_string(),
             state: "-".to_string(),
-            process: ProcessInfo {
+            process: Arc::new(ProcessInfo {
                 pid: 100,
                 name: "dnsmasq".to_string(),
                 user: "nobody".to_string(),
                 uid: 65534,
                 command: "/usr/sbin/dnsmasq".to_string(),
-            },
+            }),
         };
         let s2 = s.clone();
         assert_eq!(s2.protocol, Protocol::Udp);

@@ -49,17 +49,18 @@ mod tests {
     use super::*;
     use crate::model::{FdType, ProcessInfo};
     use crate::platform::mock::MockPlatform;
+    use std::sync::Arc;
 
     fn make_file(pid: u32, process_name: &str, user: &str, path: &str) -> OpenFile {
         OpenFile {
-            process: ProcessInfo {
+            process: Arc::new(ProcessInfo {
                 pid,
                 name: process_name.to_string(),
                 user: user.to_string(),
                 uid: 1000,
                 command: format!("/usr/bin/{}", process_name),
-            },
-            fd: 3,
+            }),
+            fd: Some(3),
             fd_type: FdType::RegularFile,
             path: path.to_string(),
             deleted: false,

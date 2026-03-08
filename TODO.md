@@ -5,6 +5,13 @@
 - [~] In progress
 - [x] Done
 
+## Urgent (Production Readiness)
+- [ ] Freeze and version JSON schema contracts (results + errors), then add schema-compat tests
+- [ ] Define and enforce permission/partial-visibility semantics (output + exit behavior)
+- [ ] Add release pipeline for tagged builds with artifacts, checksums, and notes
+- [ ] Add Homebrew tap/formula and smoke-test install path
+- [ ] Add benchmark suite + baseline comparisons vs `lsof`/`ss` on realistic process/socket loads
+
 ---
 
 ## Phase 1: Core Infrastructure
@@ -112,7 +119,7 @@
 - [x] Deleted command tests (mock platform)
 - [x] macOS-specific tests for vnode path and deleted detection (including restricted PID behavior)
 - [x] Env-sensitive socket e2e tests skip cleanly when bind is not permitted
-- [ ] Cross-platform CI (Linux + macOS)
+- [x] Cross-platform CI (Linux + macOS)
 - [ ] Benchmark tests
 
 ### Documentation
@@ -125,15 +132,15 @@
 
 ### Packaging & Distribution
 - [x] GitHub Actions CI workflow (test on Linux + macOS)
-- [ ] Release workflow with prebuilt binaries
-- [ ] Homebrew formula
+- [ ] Release workflow with prebuilt binaries (**urgent**)
+- [ ] Homebrew formula (**urgent**)
 - [ ] AUR package
 - [ ] Publish to crates.io
 - [ ] Nix flake
 
 ### Security
-- [ ] Audit: ensure no information leaks when running as root
-- [ ] Audit: ensure no TOCTOU races in `/proc` reads
+- [ ] Audit: ensure no information leaks when running as root (**urgent**)
+- [ ] Audit: ensure no TOCTOU races in `/proc` reads (**urgent**)
 - [ ] Fuzz test the `/proc/net/tcp` parser
 - [ ] Validate all user-supplied paths (no path traversal in output)
 

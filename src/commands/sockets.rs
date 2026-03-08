@@ -15,6 +15,7 @@ mod tests {
     use super::*;
     use crate::model::{ProcessInfo, Protocol, SocketEntry};
     use crate::platform::mock::MockPlatform;
+    use std::sync::Arc;
 
     fn make_socket(pid: u32, name: &str, local: &str, proto: Protocol) -> SocketEntry {
         SocketEntry {
@@ -22,13 +23,13 @@ mod tests {
             local_addr: local.to_string(),
             remote_addr: "0.0.0.0:0".to_string(),
             state: "LISTEN".to_string(),
-            process: ProcessInfo {
+            process: Arc::new(ProcessInfo {
                 pid,
                 name: name.to_string(),
                 user: "alice".to_string(),
                 uid: 1000,
                 command: format!("/usr/bin/{}", name),
-            },
+            }),
         }
     }
 

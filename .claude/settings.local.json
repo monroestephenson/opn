@@ -11,7 +11,8 @@
       "Bash(cargo build:*)",
       "Bash(cargo test:*)",
       "Bash(./target/debug/opn file:*)",
-      "Bash(./target/debug/opn pid:*)"
+      "Bash(./target/debug/opn pid:*)",
+      "Bash(cargo clippy:*)"
     ]
   }
 }

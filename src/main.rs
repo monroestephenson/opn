@@ -2,6 +2,7 @@ mod cli;
 mod commands;
 mod model;
 #[cfg(any(test, target_os = "linux"))]
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
 mod net;
 mod platform;
 mod render;

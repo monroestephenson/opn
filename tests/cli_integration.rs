@@ -1350,7 +1350,11 @@ fn test_e2e_file_json_schema_validation() {
         let arr = parsed.as_array().unwrap();
 
         for entry in arr {
-            assert!(entry["fd"].is_number(), "Missing fd field");
+            // fd is Option<i32>: present as number for real FDs, absent for exe matches
+            assert!(
+                entry.get("fd").is_none() || entry["fd"].is_number(),
+                "fd should be a number or absent"
+            );
             assert!(entry["fd_type"].is_string(), "Missing fd_type field");
             assert!(entry["path"].is_string(), "Missing path field");
             assert!(entry["deleted"].is_boolean(), "Missing deleted field");
