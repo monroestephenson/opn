@@ -75,6 +75,7 @@ pub fn run(
         WatchTarget::File => "File",
     };
     let headers = headers_for(target);
+    let show_socket_totals = matches!(target, WatchTarget::Sockets | WatchTarget::Port);
 
     let result: anyhow::Result<()> = (|| loop {
         rows.sort_by(|a, b| match sort_key {
@@ -97,12 +98,16 @@ pub fn run(
                 .split(area);
 
             let status = format!(
-                "opn watch {} | {} | sort={} | interval={}s | rows={} | j/k move, g/G top/bottom, x terminate, q quit",
+                "opn watch {} | {} | sort={} | interval={}s | {} | j/k move, g/G top/bottom, x terminate, q quit",
                 title.to_ascii_lowercase(),
                 if paused { "paused" } else { "running" },
                 sort_key.label(),
                 interval_secs,
-                rows.len()
+                if show_socket_totals {
+                    socket_state_totals(&rows)
+                } else {
+                    format!("rows={}", rows.len())
+                }
             );
             let full_status = if status_msg.is_empty() {
                 status
@@ -249,8 +254,8 @@ fn socket_rows(entries: &[crate::model::SocketEntry]) -> Vec<WatchRow> {
         .map(|e| WatchRow {
             cols: [
                 e.protocol.to_string(),
-                e.local_addr.clone(),
-                e.remote_addr.clone(),
+                crate::socket_display::display_local_addr(e),
+                crate::socket_display::display_remote_addr(e),
                 e.state.clone(),
                 e.process.pid.to_string(),
                 e.process.name.clone(),
@@ -258,6 +263,24 @@ fn socket_rows(entries: &[crate::model::SocketEntry]) -> Vec<WatchRow> {
             pid: e.process.pid,
         })
         .collect()
+}
+
+#[cfg(feature = "watch")]
+fn socket_state_totals(rows: &[WatchRow]) -> String {
+    let listen = rows
+        .iter()
+        .filter(|r| r.cols[3].eq_ignore_ascii_case("LISTEN"))
+        .count();
+    let established = rows
+        .iter()
+        .filter(|r| r.cols[3].eq_ignore_ascii_case("ESTABLISHED"))
+        .count();
+    format!(
+        "{} sockets | {} listening | {} established",
+        rows.len(),
+        listen,
+        established
+    )
 }
 
 #[cfg(feature = "watch")]

@@ -6,6 +6,7 @@ use crate::platform::Platform;
 use crate::render;
 use crate::render::table::Tabular;
 use crate::render::RenderOutcome;
+use crate::socket_display;
 
 impl Tabular for SocketEntry {
     fn headers() -> Vec<&'static str> {
@@ -22,8 +23,8 @@ impl Tabular for SocketEntry {
     fn row(&self) -> Vec<String> {
         vec![
             self.protocol.to_string(),
-            self.local_addr.clone(),
-            self.remote_addr.clone(),
+            socket_display::display_local_addr(self),
+            socket_display::display_remote_addr(self),
             self.state.clone(),
             self.process.pid.to_string(),
             self.process.name.clone(),

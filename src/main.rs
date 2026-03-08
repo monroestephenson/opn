@@ -6,6 +6,7 @@ mod model;
 mod net;
 mod platform;
 mod render;
+mod socket_display;
 mod watch;
 
 use clap::Parser;
