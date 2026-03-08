@@ -5,15 +5,16 @@
 mod tests {
     use crate::model::*;
     use crate::render::table::{format_table, Tabular};
+    use std::sync::Arc;
 
-    fn make_process(pid: u32, name: &str) -> ProcessInfo {
-        ProcessInfo {
+    fn make_process(pid: u32, name: &str) -> Arc<ProcessInfo> {
+        Arc::new(ProcessInfo {
             pid,
             name: name.to_string(),
             user: "testuser".to_string(),
             uid: 1000,
-            command: format!("/usr/bin/{}", name),
-        }
+            command: format!("/usr/bin/{name}"),
+        })
     }
 
     // ============================================================
@@ -85,7 +86,7 @@ mod tests {
     fn test_open_file_row() {
         let file = OpenFile {
             process: make_process(42, "vim"),
-            fd: 3,
+            fd: Some(3),
             fd_type: FdType::RegularFile,
             path: "/tmp/test.txt".to_string(),
             deleted: false,
@@ -101,10 +102,24 @@ mod tests {
     }
 
     #[test]
+    fn test_open_file_row_fd_none() {
+        let file = OpenFile {
+            process: make_process(42, "vim"),
+            fd: None,
+            fd_type: FdType::RegularFile,
+            path: "/usr/bin/vim".to_string(),
+            deleted: false,
+            socket_info: None,
+        };
+        let row = file.row();
+        assert_eq!(row[3], "-");
+    }
+
+    #[test]
     fn test_open_file_row_deleted() {
         let file = OpenFile {
             process: make_process(42, "app"),
-            fd: 7,
+            fd: Some(7),
             fd_type: FdType::RegularFile,
             path: "/tmp/old.log".to_string(),
             deleted: true,
@@ -118,7 +133,7 @@ mod tests {
     fn test_open_file_row_socket_type() {
         let file = OpenFile {
             process: make_process(42, "curl"),
-            fd: 5,
+            fd: Some(5),
             fd_type: FdType::Socket,
             path: String::new(),
             deleted: false,
@@ -132,7 +147,7 @@ mod tests {
     fn test_open_file_row_pipe_type() {
         let file = OpenFile {
             process: make_process(42, "bash"),
-            fd: 1,
+            fd: Some(1),
             fd_type: FdType::Pipe,
             path: "pipe:[12345]".to_string(),
             deleted: false,
@@ -163,13 +178,10 @@ mod tests {
             process: make_process(1, "nginx"),
         }];
         let output = format_table(&items);
-        // Should contain headers
         assert!(output.contains("PROTO"));
         assert!(output.contains("LOCAL ADDRESS"));
         assert!(output.contains("STATE"));
-        // Should contain separator
         assert!(output.contains("---"));
-        // Should contain data
         assert!(output.contains("TCP"));
         assert!(output.contains("0.0.0.0:80"));
         assert!(output.contains("LISTEN"));
@@ -219,13 +231,8 @@ mod tests {
         ];
         let output = format_table(&items);
         let lines: Vec<&str> = output.lines().collect();
-        assert!(
-            lines.len() >= 4,
-            "Should have header + separator + 2 data rows"
-        );
-        // Verify separator is all dashes and spaces
+        assert!(lines.len() >= 4);
         assert!(lines[1].chars().all(|c| c == '-' || c == ' '));
-        // Verify header contains expected columns
         assert!(lines[0].contains("PROTO"));
         assert!(lines[0].contains("PROCESS"));
     }
@@ -264,7 +271,7 @@ mod tests {
     fn test_json_serialize_open_files() {
         let items = vec![OpenFile {
             process: make_process(42, "vim"),
-            fd: 3,
+            fd: Some(3),
             fd_type: FdType::RegularFile,
             path: "/tmp/test.txt".to_string(),
             deleted: false,
@@ -276,7 +283,6 @@ mod tests {
         assert_eq!(parsed[0]["fd_type"], "RegularFile");
         assert_eq!(parsed[0]["path"], "/tmp/test.txt");
         assert_eq!(parsed[0]["deleted"], false);
-        // socket_info should be absent
         assert!(parsed[0].get("socket_info").is_none());
     }
 

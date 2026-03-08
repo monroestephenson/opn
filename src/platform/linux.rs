@@ -4,6 +4,7 @@ use std::collections::HashMap;
 use std::collections::HashSet;
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use super::Platform;
 use crate::model::*;
@@ -179,6 +180,7 @@ impl LinuxPlatform {
                 continue;
             }
 
+            let process = Arc::new(process);
             let fd_dir = format!("/proc/{}/fd", pid);
             let entries = match fs::read_dir(&fd_dir) {
                 Ok(e) => e,
@@ -306,7 +308,7 @@ impl Platform for LinuxPlatform {
 
     fn list_open_files(&self, pid: u32) -> Result<Vec<OpenFile>> {
         let fd_dir = format!("/proc/{}/fd", pid);
-        let process = self.process_info(pid)?;
+        let process = Arc::new(self.process_info(pid)?);
         let mut results = Vec::new();
 
         let entries =
@@ -339,7 +341,7 @@ impl Platform for LinuxPlatform {
 
             results.push(OpenFile {
                 process: process.clone(),
-                fd,
+                fd: Some(fd),
                 fd_type,
                 path: clean_path,
                 deleted,

@@ -1,6 +1,7 @@
 use anyhow::{Context, Result};
 use rayon::prelude::*;
 use std::path::Path;
+use std::sync::Arc;
 
 use super::Platform;
 use crate::model::*;
@@ -259,7 +260,7 @@ impl MacOsPlatform {
                     local_addr: format!("{}:{}", local_addr, local_port),
                     remote_addr: format!("{}:{}", remote_addr, remote_port),
                     state: state.clone(),
-                    process,
+                    process: Arc::new(process),
                 });
             }
         }
@@ -317,7 +318,7 @@ impl Platform for MacOsPlatform {
         use libproc::file_info::{ListFDs, ProcFDType};
         use libproc::proc_pid;
 
-        let process = self.process_info(pid)?;
+        let process = Arc::new(self.process_info(pid)?);
         let fd_list = proc_pid::listpidinfo::<ListFDs>(pid as i32, 256).unwrap_or_default();
 
         let mut results = Vec::new();
@@ -340,7 +341,6 @@ impl Platform for MacOsPlatform {
 
             if fd_type == FdType::RegularFile {
                 if let Some(vnode_info) = get_vnode_fd_info(pid as i32, fd) {
-                    // st_nlink == 0 is the canonical signal for unlinked-but-open files.
                     deleted = vnode_info.nlink == 0;
                     fd_type = Self::classify_vnode_mode(vnode_info.mode);
                     path = vnode_info.path;
@@ -351,7 +351,7 @@ impl Platform for MacOsPlatform {
 
             results.push(OpenFile {
                 process: process.clone(),
-                fd,
+                fd: Some(fd),
                 fd_type,
                 path,
                 deleted,
@@ -370,82 +370,74 @@ impl Platform for MacOsPlatform {
             std::fs::canonicalize(path).unwrap_or_else(|_| Path::new(path).to_path_buf());
         let canonical_str = canonical.to_string_lossy().to_string();
 
-        let pids = self.list_pids(&QueryFilter::default())?;
+        // Pass `all` through so we scan other users' PIDs when requested.
+        let pids_filter = QueryFilter {
+            all: filter.all,
+            ..QueryFilter::default()
+        };
+        let pids = self.list_pids(&pids_filter)?;
 
         let results: Vec<OpenFile> = pids
             .par_iter()
             .flat_map(|&pid| {
-                // Apply filters
-                if let Some(filter_pid) = filter.pid {
-                    if pid != filter_pid {
-                        return vec![];
-                    }
-                }
-
                 let process = match self.process_info(pid) {
                     Ok(p) => p,
                     Err(_) => return vec![],
                 };
-
-                if let Some(ref user) = filter.user {
-                    if &process.user != user {
-                        return vec![];
-                    }
-                }
-                if let Some(ref name) = filter.process_name {
-                    if &process.name != name {
-                        return vec![];
-                    }
+                if !Self::matches_process_filter(&process, filter) {
+                    return vec![];
                 }
 
-                let mut matches = Vec::new();
-
-                // Keep executable-path matching behavior for macOS parity.
-                if let Ok(proc_path) = proc_pid::pidpath(pid as i32) {
-                    let exec_matches = if let Ok(exec_canonical) = std::fs::canonicalize(&proc_path)
-                    {
-                        exec_canonical.to_string_lossy() == canonical_str
-                    } else {
-                        proc_path == canonical_str
-                    };
-                    if exec_matches {
-                        matches.push(OpenFile {
-                            process: process.clone(),
-                            fd: -1,
-                            fd_type: FdType::RegularFile,
-                            path: proc_path,
-                            deleted: false,
-                            socket_info: None,
-                        });
-                    }
-                }
-
+                let process = Arc::new(process);
                 let fd_list = proc_pid::listpidinfo::<ListFDs>(pid as i32, 256).unwrap_or_default();
 
-                for fd_info in &fd_list {
-                    if fd_info.proc_fdtype != ProcFDType::VNode as u32 {
-                        continue;
-                    }
-                    if let Some(vnode_info) = get_vnode_fd_info(pid as i32, fd_info.proc_fd) {
-                        let matches_path =
-                            if let Ok(vnode_canonical) = std::fs::canonicalize(&vnode_info.path) {
-                                vnode_canonical.to_string_lossy() == canonical_str
-                            } else {
-                                vnode_info.path == canonical_str
-                            };
+                // Scan all vnode FDs for the target path.
+                let mut matches: Vec<OpenFile> = fd_list
+                    .iter()
+                    .filter(|fi| fi.proc_fdtype == ProcFDType::VNode as u32)
+                    .filter_map(|fi| {
+                        let vnode_info = get_vnode_fd_info(pid as i32, fi.proc_fd)?;
+                        let path_matches = if let Ok(vc) = std::fs::canonicalize(&vnode_info.path) {
+                            vc.to_string_lossy() == canonical_str
+                        } else {
+                            vnode_info.path == canonical_str
+                        };
+                        if !path_matches {
+                            return None;
+                        }
+                        Some(OpenFile {
+                            process: process.clone(),
+                            fd: Some(fi.proc_fd),
+                            fd_type: FdType::RegularFile,
+                            path: vnode_info.path,
+                            deleted: vnode_info.nlink == 0,
+                            socket_info: None,
+                        })
+                    })
+                    .collect();
 
-                        if matches_path {
+                // If no FD matched, fall back to executable-path matching
+                // (the binary's text segment is mmap'd, not an open FD).
+                if matches.is_empty() {
+                    if let Ok(proc_path) = proc_pid::pidpath(pid as i32) {
+                        let exec_matches = if let Ok(ec) = std::fs::canonicalize(&proc_path) {
+                            ec.to_string_lossy() == canonical_str
+                        } else {
+                            proc_path == canonical_str
+                        };
+                        if exec_matches {
                             matches.push(OpenFile {
                                 process: process.clone(),
-                                fd: fd_info.proc_fd,
+                                fd: None,
                                 fd_type: FdType::RegularFile,
-                                path: vnode_info.path,
-                                deleted: vnode_info.nlink == 0,
+                                path: proc_path,
+                                deleted: false,
                                 socket_info: None,
                             });
                         }
                     }
                 }
+
                 matches
             })
             .collect();
@@ -465,54 +457,45 @@ impl Platform for MacOsPlatform {
         use libproc::file_info::{ListFDs, ProcFDType};
         use libproc::proc_pid;
 
-        let pids = self.list_pids(&QueryFilter::default())?;
+        let pids_filter = QueryFilter {
+            all: filter.all,
+            ..QueryFilter::default()
+        };
+        let pids = self.list_pids(&pids_filter)?;
 
         let results: Vec<OpenFile> = pids
             .par_iter()
             .flat_map(|&pid| {
-                if let Some(filter_pid) = filter.pid {
-                    if pid != filter_pid {
-                        return vec![];
-                    }
-                }
-
                 let process = match self.process_info(pid) {
                     Ok(p) => p,
                     Err(_) => return vec![],
                 };
-
-                if let Some(ref user) = filter.user {
-                    if &process.user != user {
-                        return vec![];
-                    }
-                }
-                if let Some(ref name) = filter.process_name {
-                    if &process.name != name {
-                        return vec![];
-                    }
+                if !Self::matches_process_filter(&process, filter) {
+                    return vec![];
                 }
 
+                let process = Arc::new(process);
                 let fd_list = proc_pid::listpidinfo::<ListFDs>(pid as i32, 256).unwrap_or_default();
 
-                let mut deleted_files = Vec::new();
-                for fd_info in &fd_list {
-                    if fd_info.proc_fdtype != ProcFDType::VNode as u32 {
-                        continue;
-                    }
-                    if let Some(vnode_info) = get_vnode_fd_info(pid as i32, fd_info.proc_fd) {
+                fd_list
+                    .iter()
+                    .filter(|fi| fi.proc_fdtype == ProcFDType::VNode as u32)
+                    .filter_map(|fi| {
+                        let vnode_info = get_vnode_fd_info(pid as i32, fi.proc_fd)?;
                         if vnode_info.nlink == 0 {
-                            deleted_files.push(OpenFile {
+                            Some(OpenFile {
                                 process: process.clone(),
-                                fd: fd_info.proc_fd,
+                                fd: Some(fi.proc_fd),
                                 fd_type: FdType::RegularFile,
                                 path: vnode_info.path,
                                 deleted: true,
                                 socket_info: None,
-                            });
+                            })
+                        } else {
+                            None
                         }
-                    }
-                }
-                deleted_files
+                    })
+                    .collect()
             })
             .collect();
 

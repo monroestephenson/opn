@@ -269,7 +269,7 @@ fn file_rows(entries: &[crate::model::OpenFile]) -> Vec<WatchRow> {
                 e.process.pid.to_string(),
                 e.process.name.clone(),
                 e.process.user.clone(),
-                e.fd.to_string(),
+                e.fd.map(|f| f.to_string()).unwrap_or_else(|| "-".into()),
                 e.fd_type.to_string(),
                 if e.deleted {
                     format!("{} (deleted)", e.path)

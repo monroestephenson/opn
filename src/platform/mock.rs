@@ -56,17 +56,17 @@ impl Platform for MockPlatform {
         if self.pids.contains(&pid) {
             // Check if we have a socket or file with this PID for more details
             if let Some(s) = self.sockets.iter().find(|s| s.process.pid == pid) {
-                return Ok(s.process.clone());
+                return Ok((*s.process).clone());
             }
             if let Some(f) = self.files.iter().find(|f| f.process.pid == pid) {
-                return Ok(f.process.clone());
+                return Ok((*f.process).clone());
             }
             Ok(ProcessInfo {
                 pid,
-                name: format!("mock-{}", pid),
+                name: format!("mock-{pid}"),
                 user: "mockuser".to_string(),
                 uid: 1000,
-                command: format!("/usr/bin/mock-{}", pid),
+                command: format!("/usr/bin/mock-{pid}"),
             })
         } else {
             bail!("Process {} not found", pid)

@@ -17,11 +17,12 @@ impl Tabular for OpenFile {
         } else {
             self.path.clone()
         };
+        let fd_display = self.fd.map(|f| f.to_string()).unwrap_or_else(|| "-".into());
         vec![
             self.process.pid.to_string(),
             self.process.name.clone(),
             self.process.user.clone(),
-            self.fd.to_string(),
+            fd_display,
             self.fd_type.to_string(),
             path_display,
         ]
