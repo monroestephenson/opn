@@ -1,10 +1,9 @@
 use std::collections::HashMap;
-use std::time::Duration;
-
-use anyhow::Result;
+use std::time::{Duration, Instant};
 
 use crate::agent::{self, reverse_dns, AgentResponse};
 use crate::render::RenderOutcome;
+use anyhow::Result;
 
 pub fn run(
     interface: Option<&str>,
@@ -50,30 +49,31 @@ pub fn run(
         .stdout(std::process::Stdio::piped())
         .spawn()
     {
-        Ok(child) => {
-            // If duration limit set, wait with timeout
-            let result = if duration_secs > 0 {
-                let (tx, rx) = std::sync::mpsc::channel::<std::io::Result<std::process::Output>>();
-                let handle = std::thread::spawn(move || {
-                    let out = child.wait_with_output();
-                    let _ = tx.send(out);
-                });
-                match rx.recv_timeout(Duration::from_secs(duration_secs + 2)) {
-                    Ok(res) => {
-                        let _ = handle.join();
-                        res
-                    }
-                    Err(_) => {
-                        // Timeout — try to kill if handle is still alive
-                        let _ = handle.join();
-                        return render_unavailable("tcpdump timed out", llm, allow_write);
+        Ok(mut child) => {
+            if duration_secs > 0 {
+                let deadline = Instant::now() + Duration::from_secs(duration_secs + 2);
+                loop {
+                    match child.try_wait() {
+                        Ok(Some(_status)) => break,
+                        Ok(None) => {
+                            if Instant::now() >= deadline {
+                                let _ = child.kill();
+                                let _ = child.wait();
+                                return render_unavailable("tcpdump timed out", llm, allow_write);
+                            }
+                            std::thread::sleep(Duration::from_millis(100));
+                        }
+                        Err(e) => {
+                            return render_unavailable(
+                                &format!("tcpdump wait error: {e}"),
+                                llm,
+                                allow_write,
+                            );
+                        }
                     }
                 }
-            } else {
-                child.wait_with_output()
-            };
-
-            match result {
+            }
+            match child.wait_with_output() {
                 Ok(o) => o,
                 Err(e) => {
                     return render_unavailable(&format!("tcpdump error: {e}"), llm, allow_write);
@@ -131,8 +131,9 @@ pub fn run(
 
     let packets_captured = packets.len();
 
-    // Aggregate connections: (src_ip:port, dst_ip:port, proto) -> (count, bytes)
-    let mut conn_map: HashMap<(String, String, String), (u32, u64)> = HashMap::new();
+    // Aggregate connections: (src_ip:port, dst_ip:port, proto) -> (count, bytes, dst_ip)
+    // dst_ip stored separately so IPv6 addresses are extracted correctly without re-parsing.
+    let mut conn_map: HashMap<(String, String, String), (u32, u64, String)> = HashMap::new();
     let mut proto_dist: HashMap<String, u32> = HashMap::new();
     let mut talker_map: HashMap<String, u32> = HashMap::new();
 
@@ -140,7 +141,7 @@ pub fn run(
         let src = format!("{src_ip}:{src_port}");
         let dst = format!("{dst_ip}:{dst_port}");
         let key = (src.clone(), dst.clone(), proto.clone());
-        let entry = conn_map.entry(key).or_insert((0, 0));
+        let entry = conn_map.entry(key).or_insert((0, 0, dst_ip.clone()));
         entry.0 += 1;
         entry.1 += *length as u64;
         *proto_dist.entry(proto.clone()).or_insert(0) += 1;
@@ -151,9 +152,8 @@ pub fn run(
     // Build connection list
     let mut connections: Vec<serde_json::Value> = conn_map
         .iter()
-        .map(|((src, dst, proto), (pkt_count, bytes))| {
-            let dst_ip = dst.rsplit(':').nth(1).unwrap_or(dst.as_str()).to_string();
-            let rdns_dst = if llm { reverse_dns(&dst_ip) } else { None };
+        .map(|((src, dst, proto), (pkt_count, bytes, dst_ip))| {
+            let rdns_dst = if llm { reverse_dns(dst_ip) } else { None };
             let mut v = serde_json::json!({
                 "src": src,
                 "dst": dst,

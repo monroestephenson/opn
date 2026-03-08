@@ -161,8 +161,8 @@ pub enum Command {
         /// Log type: auth, system, kernel, web, firewall, all.
         #[arg(long, default_value = "all")]
         log_type: String,
-        /// Number of lines to read from log.
-        #[arg(long, default_value_t = 200)]
+        /// Number of lines to read from log (1–10000).
+        #[arg(long, default_value_t = 200, value_parser = parse_lines)]
         lines: usize,
         /// Filter string (grep-style substring match).
         #[arg(long)]
@@ -250,6 +250,17 @@ pub enum WatchTheme {
     TokyoNight,
     Vantablack,
     White,
+}
+
+fn parse_lines(raw: &str) -> Result<usize, String> {
+    let value: usize = raw
+        .parse()
+        .map_err(|_| String::from("lines must be a positive integer"))?;
+    if (1..=10_000).contains(&value) {
+        Ok(value)
+    } else {
+        Err(String::from("lines must be in range 1..=10000"))
+    }
 }
 
 #[derive(Parser, Debug, Clone)]

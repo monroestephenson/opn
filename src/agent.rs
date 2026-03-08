@@ -1,5 +1,6 @@
 use std::collections::HashMap;
-use std::sync::mpsc;
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::{mpsc, Mutex, OnceLock};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use serde::{Deserialize, Serialize};
@@ -9,7 +10,17 @@ use crate::model::{InterfaceStats, OpenFile, ProcessAncestor, SocketEntry, TcpMe
 
 // ── DNS reverse lookup ──────────────────────────────────────────────────────
 
+/// Cache of resolved IPs to avoid redundant lookups and unbounded thread spawning.
+static DNS_CACHE: OnceLock<Mutex<HashMap<String, Option<String>>>> = OnceLock::new();
+static DNS_IN_FLIGHT: AtomicUsize = AtomicUsize::new(0);
+const DNS_MAX_IN_FLIGHT: usize = 32;
+
+fn dns_cache() -> &'static Mutex<HashMap<String, Option<String>>> {
+    DNS_CACHE.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
 /// Perform a reverse DNS lookup for `ip` with a 500ms timeout.
+/// Results are cached so each IP is resolved at most once per process.
 /// Returns None for loopback/unspecified addresses or on any failure.
 pub fn reverse_dns(ip: &str) -> Option<String> {
     // Skip loopback / unspecified
@@ -23,6 +34,19 @@ pub fn reverse_dns(ip: &str) -> Option<String> {
         return None;
     }
 
+    // Check cache first (read lock)
+    if let Ok(cache) = dns_cache().lock() {
+        if let Some(cached) = cache.get(ip) {
+            return cached.clone();
+        }
+    }
+
+    // Prevent unbounded thread growth if many unresolved IPs are seen at once.
+    if DNS_IN_FLIGHT.fetch_add(1, Ordering::AcqRel) >= DNS_MAX_IN_FLIGHT {
+        DNS_IN_FLIGHT.fetch_sub(1, Ordering::AcqRel);
+        return None;
+    }
+
     let ip_owned = ip.to_string();
     let (tx, rx) = mpsc::channel();
     std::thread::spawn(move || {
@@ -30,7 +54,15 @@ pub fn reverse_dns(ip: &str) -> Option<String> {
         let _ = tx.send(result);
     });
 
-    rx.recv_timeout(Duration::from_millis(500)).ok().flatten()
+    let result = rx.recv_timeout(Duration::from_millis(500)).ok().flatten();
+
+    // Store in cache
+    if let Ok(mut cache) = dns_cache().lock() {
+        cache.insert(ip.to_string(), result.clone());
+    }
+    DNS_IN_FLIGHT.fetch_sub(1, Ordering::AcqRel);
+
+    result
 }
 
 /// Perform a reverse lookup using libc::getnameinfo.
@@ -46,7 +78,7 @@ fn getnameinfo_lookup(ip: &str) -> Option<String> {
                     sin_family: libc::AF_INET as libc::sa_family_t,
                     sin_port: 0,
                     sin_addr: libc::in_addr {
-                        s_addr: u32::from_ne_bytes(v4.octets()),
+                        s_addr: u32::from_be_bytes(v4.octets()),
                     },
                     sin_zero: [0; 8],
                     #[cfg(target_os = "macos")]

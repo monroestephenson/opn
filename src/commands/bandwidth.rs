@@ -16,6 +16,18 @@ pub fn human_rate(bps: u64) -> String {
     }
 }
 
+fn human_bytes(bytes: u64) -> String {
+    if bytes >= 1_000_000_000 {
+        format!("{:.1} GB", bytes as f64 / 1_000_000_000.0)
+    } else if bytes >= 1_000_000 {
+        format!("{:.1} MB", bytes as f64 / 1_000_000.0)
+    } else if bytes >= 1_000 {
+        format!("{:.1} KB", bytes as f64 / 1_000.0)
+    } else {
+        format!("{bytes} B")
+    }
+}
+
 pub fn run(
     platform: &dyn Platform,
     duration_secs: u64,
@@ -116,8 +128,8 @@ pub fn run(
                 r.iface,
                 r.rx_human,
                 r.tx_human,
-                human_rate(rx_total),
-                human_rate(tx_total)
+                human_bytes(rx_total),
+                human_bytes(tx_total)
             );
         }
     }
