@@ -70,9 +70,11 @@ impl LinuxPlatform {
 
         let should_tcp = !filter.udp || filter.tcp || (!filter.tcp && !filter.udp);
         let should_udp = !filter.tcp || filter.udp || (!filter.tcp && !filter.udp);
+        let want_v4 = !filter.ipv6;
+        let want_v6 = !filter.ipv4;
 
         if should_tcp {
-            if !filter.ipv6 || (!filter.ipv4 && !filter.ipv6) {
+            if want_v4 {
                 if let Ok(content) = fs::read_to_string("/proc/net/tcp") {
                     for line in content.lines().skip(1) {
                         if let Some(entry) = net::parse_proc_net_tcp_line(line) {
@@ -83,7 +85,7 @@ impl LinuxPlatform {
                     }
                 }
             }
-            if !filter.ipv4 || (!filter.ipv4 && !filter.ipv6) {
+            if want_v6 {
                 if let Ok(content) = fs::read_to_string("/proc/net/tcp6") {
                     for line in content.lines().skip(1) {
                         if let Some(entry) = net::parse_proc_net_tcp6_line(line) {
@@ -97,7 +99,7 @@ impl LinuxPlatform {
         }
 
         if should_udp {
-            if !filter.ipv6 || (!filter.ipv4 && !filter.ipv6) {
+            if want_v4 {
                 if let Ok(content) = fs::read_to_string("/proc/net/udp") {
                     for line in content.lines().skip(1) {
                         if let Some(entry) = net::parse_proc_net_udp_line(line) {
@@ -108,7 +110,7 @@ impl LinuxPlatform {
                     }
                 }
             }
-            if !filter.ipv4 || (!filter.ipv4 && !filter.ipv6) {
+            if want_v6 {
                 if let Ok(content) = fs::read_to_string("/proc/net/udp6") {
                     for line in content.lines().skip(1) {
                         if let Some(entry) = net::parse_proc_net_udp6_line(line) {
