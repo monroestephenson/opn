@@ -53,7 +53,7 @@
 - [x] Linux: Parse all of `/proc/net/{tcp,tcp6,udp,udp6}`, resolve inodes to PIDs
 - [x] macOS: Use `netstat2::iterate_sockets_info()` (no port filter)
 - [x] Filter flags: `--tcp`, `--udp`, `--ipv4`, `--ipv6`, `--state LISTEN`
-- [ ] Sort output by protocol, then port
+- [x] Sort output by protocol, then port
 - [x] JSON output
 
 ## Phase 7: Watch Mode (`opn watch`)
@@ -126,8 +126,8 @@
 
 ### Documentation
 - [x] README with usage examples
-- [ ] `--help` text review and polish for all subcommands
-- [ ] Man page generation
+- [x] `--help` text review and polish for all subcommands
+- [x] Man page generation
 - [ ] CHANGELOG.md
 - [x] RELEASE.md (release process docs)
 - [ ] Contributing guide
@@ -142,8 +142,8 @@
 - [ ] Nix flake
 
 ### Security
-- [ ] Audit: ensure no information leaks when running as root (**urgent**)
-- [ ] Audit: ensure no TOCTOU races in `/proc` reads (**urgent**)
+- [x] Audit: ensure no information leaks when running as root (**urgent**)
+- [x] Audit: ensure no TOCTOU races in `/proc` reads (**urgent**)
 - [ ] Fuzz test the `/proc/net/tcp` parser
 - [ ] Validate all user-supplied paths (no path traversal in output)
 
