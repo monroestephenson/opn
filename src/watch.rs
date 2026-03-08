@@ -18,7 +18,7 @@ pub fn run(
     use ratatui::backend::CrosstermBackend;
     use ratatui::layout::{Constraint, Direction, Layout};
     use ratatui::style::{Modifier, Style};
-    use ratatui::widgets::{Block, Borders, Cell, Paragraph, Row, Table};
+    use ratatui::widgets::{Block, Borders, Cell, Paragraph, Row, Table, TableState};
     use ratatui::Terminal;
     use std::io::stdout;
     use std::time::{Duration, Instant};
@@ -67,6 +67,7 @@ pub fn run(
     let tick_rate = Duration::from_secs(interval_secs);
     let mut rows = snapshot_rows(platform, target, port, file, filter)?;
     let mut selected = 0usize;
+    let mut table_state = TableState::default();
     let mut status_msg = String::new();
     let title = match target {
         WatchTarget::Sockets => "Sockets",
@@ -82,6 +83,11 @@ pub fn run(
             SortKey::Pid => a.cols[4].cmp(&b.cols[4]).then(a.cols[1].cmp(&b.cols[1])),
         });
         clamp_selection(&mut selected, rows.len());
+        if rows.is_empty() {
+            table_state.select(None);
+        } else {
+            table_state.select(Some(selected));
+        }
 
         terminal.draw(|frame| {
             let area = frame.area();
@@ -107,20 +113,15 @@ pub fn run(
 
             let header = Row::new(headers)
                 .style(Style::default().add_modifier(Modifier::BOLD));
-            let rows_view = rows.iter().enumerate().map(|(idx, e)| {
-                let row = Row::new(vec![
+            let rows_view = rows.iter().map(|e| {
+                Row::new(vec![
                     Cell::from(e.cols[0].clone()),
                     Cell::from(e.cols[1].clone()),
                     Cell::from(e.cols[2].clone()),
                     Cell::from(e.cols[3].clone()),
                     Cell::from(e.cols[4].clone()),
                     Cell::from(e.cols[5].clone()),
-                ]);
-                if idx == selected {
-                    row.style(Style::default().add_modifier(Modifier::REVERSED))
-                } else {
-                    row
-                }
+                ])
             });
             let table = Table::new(
                 rows_view,
@@ -134,8 +135,9 @@ pub fn run(
                 ],
             )
             .header(header)
-            .block(Block::default().borders(Borders::ALL).title(title));
-            frame.render_widget(table, chunks[1]);
+            .block(Block::default().borders(Borders::ALL).title(title))
+            .row_highlight_style(Style::default().add_modifier(Modifier::REVERSED));
+            frame.render_stateful_widget(table, chunks[1], &mut table_state);
         })?;
 
         let timeout = tick_rate.saturating_sub(last_tick.elapsed());
