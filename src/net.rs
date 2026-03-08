@@ -23,9 +23,10 @@ pub fn parse_proc_ipv6(hex: &str) -> Option<Ipv6Addr> {
     if hex.len() != 32 {
         return None;
     }
+    let raw = hex.as_bytes();
     let mut bytes = [0u8; 16];
     for i in 0..4 {
-        let chunk = &hex[i * 8..(i + 1) * 8];
+        let chunk = std::str::from_utf8(&raw[i * 8..(i + 1) * 8]).ok()?;
         let val = u32::from_str_radix(chunk, 16).ok()?;
         let le = val.to_le_bytes();
         bytes[i * 4] = le[0];
@@ -225,35 +226,6 @@ pub fn parse_proc_net_tcp6_line(line: &str) -> Option<ProcNetEntry> {
     })
 }
 
-/// Parse a single line from /proc/net/udp.
-pub fn parse_proc_net_udp_line(line: &str) -> Option<ProcNetEntry> {
-    // Same format as tcp, but state is less meaningful
-    parse_proc_net_tcp_line(line).map(|mut e| {
-        e.protocol = Protocol::Udp;
-        // UDP states are different — 07 = established, others mostly unused
-        // We just show the raw state or simplify
-        e.state = if e.state == "CLOSE" {
-            "UNCONN".to_string()
-        } else {
-            e.state
-        };
-        e
-    })
-}
-
-/// Parse a single line from /proc/net/udp6.
-pub fn parse_proc_net_udp6_line(line: &str) -> Option<ProcNetEntry> {
-    parse_proc_net_tcp6_line(line).map(|mut e| {
-        e.protocol = Protocol::Udp;
-        e.state = if e.state == "CLOSE" {
-            "UNCONN".to_string()
-        } else {
-            e.state
-        };
-        e
-    })
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -360,6 +332,12 @@ mod tests {
     #[test]
     fn test_parse_proc_ipv6_invalid_hex() {
         assert!(parse_proc_ipv6("ZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZ").is_none());
+    }
+
+    #[test]
+    fn test_parse_proc_ipv6_non_ascii_does_not_panic() {
+        // 16 chars * 2 bytes each = 32 bytes, but not valid ASCII hex.
+        assert!(parse_proc_ipv6("ÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿ").is_none());
     }
 
     // ============================================================
@@ -619,13 +597,21 @@ mod tests {
     }
 
     // ============================================================
-    // /proc/net/udp line parsing
+    // /proc/net/udp and udp6 parsing (via file-level API)
     // ============================================================
+
+    const UDP_HEADER: &str =
+        "  sl  local_address rem_address   st tx_queue rx_queue tr tm->when retrnsmt   uid  timeout inode";
 
     #[test]
     fn test_parse_proc_net_udp_line() {
-        let line = "   0: 00000000:0035 00000000:0000 07 00000000:00000000 00:00000000 00000000  0 0 55555 1";
-        let entry = parse_proc_net_udp_line(line).unwrap();
+        let content = format!(
+            "{}\n   0: 00000000:0035 00000000:0000 07 00000000:00000000 00:00000000 00000000  0 0 55555 1\n",
+            UDP_HEADER
+        );
+        let result = parse_proc_net_udp(&content);
+        assert_eq!(result.entries.len(), 1);
+        let entry = &result.entries[0];
         assert_eq!(entry.local_addr, "0.0.0.0");
         assert_eq!(entry.local_port, 53); // DNS
                                           // State 07 = CLOSE in TCP, but UDP rewrites CLOSE → UNCONN
@@ -635,32 +621,35 @@ mod tests {
 
     #[test]
     fn test_parse_proc_net_udp_line_unconn() {
-        // State 07 maps to "CLOSE" in TCP, but UDP rewrite maps it to itself (not "CLOSE")
-        // Actually state 07 = CLOSE in tcp_state_name. UDP rewrites "CLOSE" to "UNCONN"
-        let line = "   0: 00000000:0035 00000000:0000 07 00000000:00000000 00:00000000 00000000  0 0 55555 1";
-        let entry = parse_proc_net_udp_line(line).unwrap();
-        assert_eq!(entry.state, "UNCONN");
+        let content = format!(
+            "{}\n   0: 00000000:0035 00000000:0000 07 00000000:00000000 00:00000000 00000000  0 0 55555 1\n",
+            UDP_HEADER
+        );
+        let result = parse_proc_net_udp(&content);
+        assert_eq!(result.entries[0].state, "UNCONN");
     }
 
     #[test]
     fn test_parse_proc_net_udp_line_non_close_state_preserved() {
         // If state isn't CLOSE, it should be preserved as-is
-        let line = "   0: 00000000:0035 00000000:0000 01 00000000:00000000 00:00000000 00000000  0 0 55555 1";
-        let entry = parse_proc_net_udp_line(line).unwrap();
-        assert_eq!(entry.state, "ESTABLISHED");
+        let content = format!(
+            "{}\n   0: 00000000:0035 00000000:0000 01 00000000:00000000 00:00000000 00000000  0 0 55555 1\n",
+            UDP_HEADER
+        );
+        let result = parse_proc_net_udp(&content);
+        assert_eq!(result.entries[0].state, "ESTABLISHED");
     }
-
-    // ============================================================
-    // /proc/net/udp6 line parsing
-    // ============================================================
 
     #[test]
     fn test_parse_proc_net_udp6_line() {
-        let line = "   0: 00000000000000000000000000000000:0035 00000000000000000000000000000000:0000 07 00000000:00000000 00:00000000 00000000  0 0 66666 1";
-        let entry = parse_proc_net_udp6_line(line).unwrap();
-        assert_eq!(entry.local_port, 53);
-        assert_eq!(entry.state, "UNCONN");
-        assert_eq!(entry.inode, 66666);
+        let content = format!(
+            "{}\n   0: 00000000000000000000000000000000:0035 00000000000000000000000000000000:0000 07 00000000:00000000 00:00000000 00000000  0 0 66666 1\n",
+            UDP_HEADER
+        );
+        let result = parse_proc_net_udp6(&content);
+        assert_eq!(result.entries[0].local_port, 53);
+        assert_eq!(result.entries[0].state, "UNCONN");
+        assert_eq!(result.entries[0].inode, 66666);
     }
 
     // ============================================================
