@@ -292,7 +292,40 @@ impl Platform for LinuxPlatform {
         anyhow::bail!("opn sockets: not yet implemented")
     }
 
-    fn find_deleted(&self, _filter: &QueryFilter) -> Result<Vec<OpenFile>> {
-        anyhow::bail!("opn deleted: not yet implemented")
+    fn find_deleted(&self, filter: &QueryFilter) -> Result<Vec<OpenFile>> {
+        let pids = self.list_pids(filter)?;
+        let mut results = Vec::new();
+
+        for pid in pids {
+            if let Some(filter_pid) = filter.pid {
+                if pid != filter_pid {
+                    continue;
+                }
+            }
+
+            let files = match self.list_open_files(pid) {
+                Ok(f) => f,
+                Err(_) => continue,
+            };
+
+            for file in files {
+                if !file.deleted {
+                    continue;
+                }
+                if let Some(user) = &filter.user {
+                    if file.process.user != *user {
+                        continue;
+                    }
+                }
+                if let Some(process_name) = &filter.process_name {
+                    if file.process.name != *process_name {
+                        continue;
+                    }
+                }
+                results.push(file);
+            }
+        }
+
+        Ok(results)
     }
 }

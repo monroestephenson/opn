@@ -30,17 +30,17 @@
 - [ ] macOS: Per-FD file path resolution (needs `libproc` upgrade or FFI bindings for `proc_pidfdvnodeinfo`)
 
 ## Phase 4: PID Inspection (`opn pid <pid>`)
-- [ ] Implement `commands/pid.rs` — list all open files/sockets for a given PID
-- [ ] Table output showing FD number, type, path/socket info
-- [ ] JSON output for `opn pid <pid> --json`
-- [ ] Handle non-existent PID gracefully
-- [ ] Handle permission-denied for other users' PIDs
+- [x] Implement `commands/pid.rs` — list all open files/sockets for a given PID
+- [x] Table output showing FD number, type, path/socket info
+- [x] JSON output for `opn pid <pid> --json`
+- [x] Handle non-existent PID gracefully
+- [x] Handle permission-denied for other users' PIDs
 
 ## Phase 5: Deleted Files (`opn deleted`)
-- [ ] Linux: Scan `/proc/*/fd/` for symlinks ending in `(deleted)`
-- [ ] macOS: Investigate feasibility (no direct equivalent)
-- [ ] Table output: PID, process, user, path, size (if available)
-- [ ] Filter by user/process name
+- [x] Linux: Scan `/proc/*/fd/` for symlinks ending in `(deleted)`
+- [~] macOS: Investigate feasibility (no direct equivalent)
+- [~] Table output: PID, process, user, path, size (if available)
+- [x] Filter by user/process name
 
 ## Phase 6: Socket Listing (`opn sockets`)
 - [ ] Linux: Parse all of `/proc/net/{tcp,tcp6,udp,udp6}`, resolve inodes to PIDs

@@ -101,7 +101,27 @@ impl Platform for MockPlatform {
         bail!("opn sockets: not yet implemented")
     }
 
-    fn find_deleted(&self, _filter: &QueryFilter) -> Result<Vec<OpenFile>> {
-        bail!("opn deleted: not yet implemented")
+    fn find_deleted(&self, filter: &QueryFilter) -> Result<Vec<OpenFile>> {
+        Ok(self
+            .files
+            .iter()
+            .filter(|f| f.deleted)
+            .filter(|f| filter.pid.map(|pid| f.process.pid == pid).unwrap_or(true))
+            .filter(|f| {
+                filter
+                    .user
+                    .as_ref()
+                    .map(|user| f.process.user == *user)
+                    .unwrap_or(true)
+            })
+            .filter(|f| {
+                filter
+                    .process_name
+                    .as_ref()
+                    .map(|name| f.process.name == *name)
+                    .unwrap_or(true)
+            })
+            .cloned()
+            .collect())
     }
 }

@@ -189,7 +189,60 @@ mod tests {
         let mock = MockPlatform::empty();
         let filter = QueryFilter::default();
         assert!(mock.list_sockets(&filter).is_err());
-        assert!(mock.find_deleted(&filter).is_err());
+    }
+
+    #[test]
+    fn test_mock_platform_find_deleted() {
+        let mock = MockPlatform::with_files(vec![
+            OpenFile {
+                process: ProcessInfo {
+                    pid: 10,
+                    name: "worker".to_string(),
+                    user: "alice".to_string(),
+                    uid: 1000,
+                    command: "/usr/bin/worker".to_string(),
+                },
+                fd: 4,
+                fd_type: FdType::RegularFile,
+                path: "/tmp/a.log".to_string(),
+                deleted: true,
+                socket_info: None,
+            },
+            OpenFile {
+                process: ProcessInfo {
+                    pid: 11,
+                    name: "worker".to_string(),
+                    user: "alice".to_string(),
+                    uid: 1000,
+                    command: "/usr/bin/worker".to_string(),
+                },
+                fd: 5,
+                fd_type: FdType::RegularFile,
+                path: "/tmp/b.log".to_string(),
+                deleted: false,
+                socket_info: None,
+            },
+        ]);
+
+        let all = mock.find_deleted(&QueryFilter::default()).unwrap();
+        assert_eq!(all.len(), 1);
+        assert_eq!(all[0].path, "/tmp/a.log");
+
+        let by_pid = mock
+            .find_deleted(&QueryFilter {
+                pid: Some(10),
+                ..QueryFilter::default()
+            })
+            .unwrap();
+        assert_eq!(by_pid.len(), 1);
+
+        let by_user_miss = mock
+            .find_deleted(&QueryFilter {
+                user: Some("bob".to_string()),
+                ..QueryFilter::default()
+            })
+            .unwrap();
+        assert!(by_user_miss.is_empty());
     }
 
     #[test]

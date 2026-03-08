@@ -143,37 +143,52 @@ fn test_unknown_subcommand() {
 }
 
 // ============================================================
-// Stub commands return proper errors
+// PID + remaining stub commands
 // ============================================================
 
 #[test]
-fn test_pid_stub_returns_error() {
+fn test_pid_succeeds_for_current_process() {
+    let pid = std::process::id().to_string();
     let output = opn_cmd()
-        .args(["pid", "1"])
+        .args(["pid", &pid])
+        .output()
+        .expect("failed to run opn");
+    assert!(output.status.success());
+}
+
+#[test]
+fn test_pid_nonexistent_returns_error() {
+    let output = opn_cmd()
+        .args(["pid", "4294967295"])
         .output()
         .expect("failed to run opn");
     assert!(!output.status.success());
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
-        stderr.contains("not yet implemented"),
-        "Expected stub message, got: {}",
+        stderr.contains("not found"),
+        "Expected not-found message, got: {}",
         stderr
     );
 }
 
 #[test]
-fn test_deleted_stub_returns_error() {
+fn test_deleted_command_runs_or_returns_not_implemented() {
     let output = opn_cmd()
-        .args(["deleted"])
+        .args(["deleted", "--json"])
         .output()
         .expect("failed to run opn");
-    assert!(!output.status.success());
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(
-        stderr.contains("not yet implemented"),
-        "Expected stub message, got: {}",
-        stderr
-    );
+    if output.status.success() {
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let parsed: serde_json::Value = serde_json::from_str(stdout.trim()).expect("invalid JSON");
+        assert!(parsed.is_array());
+    } else {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(
+            stderr.contains("not yet implemented"),
+            "Expected stub message on unsupported platform, got: {}",
+            stderr
+        );
+    }
 }
 
 #[test]
