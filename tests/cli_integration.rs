@@ -38,6 +38,7 @@ fn assert_non_error_exit(output: &Output) {
     );
 }
 
+#[cfg(target_os = "macos")]
 fn tmp_path_aliases(path: &str) -> Vec<String> {
     let mut aliases = vec![path.to_string()];
     if let Some(rest) = path.strip_prefix("/tmp/") {
@@ -1088,7 +1089,10 @@ fn test_e2e_sockets_state_filter_listen() {
     let parsed: serde_json::Value = serde_json::from_str(stdout.trim()).expect("invalid JSON");
     let arr = parsed.as_array().expect("expected array");
     let found = arr.iter().any(|entry| {
-        entry["state"].as_str() == Some("LISTEN")
+        entry["state"]
+            .as_str()
+            .map(|s| s.eq_ignore_ascii_case("LISTEN"))
+            .unwrap_or(false)
             && entry["process"]["pid"].as_u64() == Some(my_pid as u64)
             && entry["local_addr"]
                 .as_str()

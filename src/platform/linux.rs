@@ -285,17 +285,18 @@ impl Platform for LinuxPlatform {
 
         let uid = Self::read_proc_uid(pid).unwrap_or(0);
         let user = Self::uid_to_username(uid);
+        let display_command = if command.is_empty() {
+            name.clone()
+        } else {
+            command
+        };
 
         Ok(ProcessInfo {
             pid,
             name,
             user,
             uid,
-            command: if command.is_empty() {
-                name.clone()
-            } else {
-                command
-            },
+            command: display_command,
         })
     }
 

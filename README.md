@@ -8,6 +8,15 @@ A cross-platform CLI tool that replaces common `lsof` workflows. Reads process/f
 cargo install --path .
 ```
 
+## Development Hooks
+
+Use `pre-commit` to run formatting/lint/tests before each commit:
+
+```bash
+pipx install pre-commit   # or: brew install pre-commit
+pre-commit install
+```
+
 ## Usage
 
 ### Find processes on a port
