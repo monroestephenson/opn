@@ -478,7 +478,7 @@ mod tests {
     #[test]
     fn test_parse_proc_start_time_parses_expected_field() {
         let stat =
-            "12345 (nginx worker) S 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 987654 21 22";
+            "12345 (nginx worker) S 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 987654 21 22";
         assert_eq!(LinuxPlatform::parse_proc_start_time(stat), Some(987654));
     }
 
