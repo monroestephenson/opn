@@ -79,6 +79,22 @@ impl LinuxPlatform {
         unsafe { libc::geteuid() }
     }
 
+    fn warn_if_parse_issues(path: &str, result: &net::ProcNetParseResult) {
+        if !result.header_valid {
+            eprintln!(
+                "warning: {} has an unexpected header format — \
+                 socket data may be incomplete or incorrect",
+                path
+            );
+        }
+        if result.failed_lines > 0 {
+            eprintln!(
+                "warning: {} line(s) in {} could not be parsed and were skipped",
+                result.failed_lines, path
+            );
+        }
+    }
+
     fn classify_fd_target(target: &str) -> FdType {
         if target.starts_with("socket:[") {
             FdType::Socket
@@ -110,22 +126,22 @@ impl LinuxPlatform {
         if should_tcp {
             if want_v4 {
                 if let Ok(content) = fs::read_to_string("/proc/net/tcp") {
-                    for line in content.lines().skip(1) {
-                        if let Some(entry) = net::parse_proc_net_tcp_line(line) {
-                            if port_filter.is_none() || port_filter == Some(entry.local_port) {
-                                map.insert(entry.inode, entry);
-                            }
+                    let result = net::parse_proc_net_tcp(&content);
+                    Self::warn_if_parse_issues("/proc/net/tcp", &result);
+                    for entry in result.entries {
+                        if port_filter.is_none() || port_filter == Some(entry.local_port) {
+                            map.insert(entry.inode, entry);
                         }
                     }
                 }
             }
             if want_v6 {
                 if let Ok(content) = fs::read_to_string("/proc/net/tcp6") {
-                    for line in content.lines().skip(1) {
-                        if let Some(entry) = net::parse_proc_net_tcp6_line(line) {
-                            if port_filter.is_none() || port_filter == Some(entry.local_port) {
-                                map.insert(entry.inode, entry);
-                            }
+                    let result = net::parse_proc_net_tcp6(&content);
+                    Self::warn_if_parse_issues("/proc/net/tcp6", &result);
+                    for entry in result.entries {
+                        if port_filter.is_none() || port_filter == Some(entry.local_port) {
+                            map.insert(entry.inode, entry);
                         }
                     }
                 }
@@ -135,22 +151,22 @@ impl LinuxPlatform {
         if should_udp {
             if want_v4 {
                 if let Ok(content) = fs::read_to_string("/proc/net/udp") {
-                    for line in content.lines().skip(1) {
-                        if let Some(entry) = net::parse_proc_net_udp_line(line) {
-                            if port_filter.is_none() || port_filter == Some(entry.local_port) {
-                                map.insert(entry.inode, entry);
-                            }
+                    let result = net::parse_proc_net_udp(&content);
+                    Self::warn_if_parse_issues("/proc/net/udp", &result);
+                    for entry in result.entries {
+                        if port_filter.is_none() || port_filter == Some(entry.local_port) {
+                            map.insert(entry.inode, entry);
                         }
                     }
                 }
             }
             if want_v6 {
                 if let Ok(content) = fs::read_to_string("/proc/net/udp6") {
-                    for line in content.lines().skip(1) {
-                        if let Some(entry) = net::parse_proc_net_udp6_line(line) {
-                            if port_filter.is_none() || port_filter == Some(entry.local_port) {
-                                map.insert(entry.inode, entry);
-                            }
+                    let result = net::parse_proc_net_udp6(&content);
+                    Self::warn_if_parse_issues("/proc/net/udp6", &result);
+                    for entry in result.entries {
+                        if port_filter.is_none() || port_filter == Some(entry.local_port) {
+                            map.insert(entry.inode, entry);
                         }
                     }
                 }

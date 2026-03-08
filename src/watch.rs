@@ -51,6 +51,9 @@ pub fn run(
     if target == WatchTarget::File && file.is_none() {
         anyhow::bail!("watch --target file requires --file <PATH>");
     }
+    if target == WatchTarget::File {
+        crate::path_safety::validate_user_path(file.expect("validated above"))?;
+    }
 
     #[derive(Clone, Copy, PartialEq, Eq)]
     enum SortKey {
