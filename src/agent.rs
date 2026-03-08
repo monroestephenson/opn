@@ -1,10 +1,104 @@
 use std::collections::HashMap;
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::sync::mpsc;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 
 use crate::model::{InterfaceStats, OpenFile, ProcessAncestor, SocketEntry, TcpMetrics};
+
+// ── DNS reverse lookup ──────────────────────────────────────────────────────
+
+/// Perform a reverse DNS lookup for `ip` with a 500ms timeout.
+/// Returns None for loopback/unspecified addresses or on any failure.
+pub fn reverse_dns(ip: &str) -> Option<String> {
+    // Skip loopback / unspecified
+    if ip.starts_with("127.")
+        || ip == "0.0.0.0"
+        || ip == "::"
+        || ip == "::1"
+        || ip.is_empty()
+        || ip == "*"
+    {
+        return None;
+    }
+
+    let ip_owned = ip.to_string();
+    let (tx, rx) = mpsc::channel();
+    std::thread::spawn(move || {
+        let result = getnameinfo_lookup(&ip_owned);
+        let _ = tx.send(result);
+    });
+
+    rx.recv_timeout(Duration::from_millis(500)).ok().flatten()
+}
+
+/// Perform a reverse lookup using libc::getnameinfo.
+fn getnameinfo_lookup(ip: &str) -> Option<String> {
+    use std::net::IpAddr;
+    let addr: IpAddr = ip.parse().ok()?;
+
+    let mut host_buf = [0i8; 1025]; // NI_MAXHOST
+    let ret = unsafe {
+        match addr {
+            IpAddr::V4(v4) => {
+                let sa = libc::sockaddr_in {
+                    sin_family: libc::AF_INET as libc::sa_family_t,
+                    sin_port: 0,
+                    sin_addr: libc::in_addr {
+                        s_addr: u32::from_ne_bytes(v4.octets()),
+                    },
+                    sin_zero: [0; 8],
+                    #[cfg(target_os = "macos")]
+                    sin_len: std::mem::size_of::<libc::sockaddr_in>() as u8,
+                };
+                libc::getnameinfo(
+                    &sa as *const libc::sockaddr_in as *const libc::sockaddr,
+                    std::mem::size_of::<libc::sockaddr_in>() as libc::socklen_t,
+                    host_buf.as_mut_ptr(),
+                    host_buf.len() as libc::socklen_t,
+                    std::ptr::null_mut(),
+                    0,
+                    libc::NI_NAMEREQD,
+                )
+            }
+            IpAddr::V6(v6) => {
+                let sa = libc::sockaddr_in6 {
+                    sin6_family: libc::AF_INET6 as libc::sa_family_t,
+                    sin6_port: 0,
+                    sin6_flowinfo: 0,
+                    sin6_addr: libc::in6_addr {
+                        s6_addr: v6.octets(),
+                    },
+                    sin6_scope_id: 0,
+                    #[cfg(target_os = "macos")]
+                    sin6_len: std::mem::size_of::<libc::sockaddr_in6>() as u8,
+                };
+                libc::getnameinfo(
+                    &sa as *const libc::sockaddr_in6 as *const libc::sockaddr,
+                    std::mem::size_of::<libc::sockaddr_in6>() as libc::socklen_t,
+                    host_buf.as_mut_ptr(),
+                    host_buf.len() as libc::socklen_t,
+                    std::ptr::null_mut(),
+                    0,
+                    libc::NI_NAMEREQD,
+                )
+            }
+        }
+    };
+
+    if ret != 0 {
+        return None;
+    }
+
+    let cstr = unsafe { std::ffi::CStr::from_ptr(host_buf.as_ptr()) };
+    let s = cstr.to_string_lossy().trim_end_matches('.').to_string();
+    if s.is_empty() {
+        None
+    } else {
+        Some(s)
+    }
+}
 
 // ── Compact socket for LLM output ──────────────────────────────────────────
 
@@ -25,6 +119,8 @@ pub struct AgentSocket {
     pub cmd: String,
     #[serde(skip_serializing_if = "Vec::is_empty", rename = "tree")]
     pub ancestry: Vec<AgentAncestor>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub rdns: Option<String>,
 }
 
 #[derive(Serialize, Deserialize, Clone)]
@@ -108,7 +204,12 @@ pub fn build_actions(allow_write: bool) -> serde_json::Value {
         "snmp":       "opn --llm snmp",
         "diagnose":   "opn --llm diagnose",
         "snapshot":   "opn --llm snapshot [--out <FILE>]",
-        "diff":       "opn --llm diff <SNAPSHOT_FILE>"
+        "diff":       "opn --llm diff <SNAPSHOT_FILE>",
+        "resources":  "opn --llm resources",
+        "netconfig":  "opn --llm netconfig",
+        "logs":       "opn --llm logs [--log-type auth|system|kernel|web|firewall|all] [--lines N] [--filter TEXT]",
+        "bandwidth":  "opn --llm bandwidth [--duration SECS]",
+        "capture":    "opn --llm capture [--interface IFACE] [--port PORT] [--host IP] [--count N] [--duration SECS]"
     });
 
     if allow_write {
@@ -138,7 +239,31 @@ pub fn print_agent_response(resp: &AgentResponse) {
     println!("{}", serde_json::to_string(resp).unwrap_or_default());
 }
 
-pub fn socket_to_agent(s: &SocketEntry, ancestry: Vec<ProcessAncestor>) -> AgentSocket {
+pub fn socket_to_agent(
+    s: &SocketEntry,
+    ancestry: Vec<ProcessAncestor>,
+    resolve: bool,
+) -> AgentSocket {
+    let rdns = if resolve {
+        // Extract IP from "ip:port" (handle IPv6 "[::1]:port" form too)
+        let remote_ip = if s.remote_addr.starts_with('[') {
+            // IPv6 bracket notation: [::1]:port
+            s.remote_addr
+                .trim_start_matches('[')
+                .split(']')
+                .next()
+                .unwrap_or("")
+        } else {
+            s.remote_addr
+                .rsplit_once(':')
+                .map(|(ip, _)| ip)
+                .unwrap_or(&s.remote_addr)
+        };
+        reverse_dns(remote_ip)
+    } else {
+        None
+    };
+
     AgentSocket {
         protocol: s.protocol.to_string(),
         local: s.local_addr.clone(),
@@ -155,6 +280,7 @@ pub fn socket_to_agent(s: &SocketEntry, ancestry: Vec<ProcessAncestor>) -> Agent
                 name: a.name,
             })
             .collect(),
+        rdns,
     }
 }
 
@@ -325,6 +451,7 @@ mod tests {
             user: "root".to_string(),
             cmd: "nc -l 4444".to_string(),
             ancestry: vec![],
+            rdns: None,
         }];
         let hints = detect_anomalies(&sockets, &[]);
         assert!(!hints.is_empty());

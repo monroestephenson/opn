@@ -581,4 +581,201 @@ impl Platform for MacOsPlatform {
     fn tcp_metrics(&self) -> Result<Option<TcpMetrics>> {
         Ok(None)
     }
+
+    fn process_resources(&self, pid: u32) -> Result<ProcessResources> {
+        // macOS ps: `nlwp` is not supported; use `pid=,pcpu=,rss=,vsz=` only.
+        // Thread count via `ps -M` (one line per thread) is a separate call.
+        let output = std::process::Command::new("ps")
+            .args(["-o", "pid=,pcpu=,rss=,vsz=", "-p", &pid.to_string()])
+            .output()
+            .context("Failed to run ps")?;
+
+        let text = String::from_utf8_lossy(&output.stdout);
+        let line = text.lines().find(|l| !l.trim().is_empty());
+
+        let (cpu_pct, mem_rss_kb, mem_vms_kb) = if let Some(line) = line {
+            let cols: Vec<&str> = line.split_whitespace().collect();
+            // cols: pid, pcpu, rss (KB), vsz (KB)
+            if cols.len() >= 4 {
+                let cpu: f64 = cols[1].parse().unwrap_or(0.0);
+                let rss: u64 = cols[2].parse().unwrap_or(0);
+                let vsz: u64 = cols[3].parse().unwrap_or(0);
+                (cpu, rss, vsz)
+            } else {
+                (0.0, 0, 0)
+            }
+        } else {
+            (0.0, 0, 0)
+        };
+
+        // Thread count: `ps -M -p <pid>` prints one line per thread.
+        let threads = std::process::Command::new("ps")
+            .args(["-M", "-p", &pid.to_string()])
+            .output()
+            .ok()
+            .map(|o| {
+                String::from_utf8_lossy(&o.stdout)
+                    .lines()
+                    .filter(|l| !l.trim().is_empty())
+                    .count()
+                    .saturating_sub(1) as u32 // subtract header
+            })
+            .unwrap_or(0);
+
+        // open_fds: run lsof -p pid and count lines (best-effort)
+        let open_fds = std::process::Command::new("lsof")
+            .args(["-p", &pid.to_string()])
+            .output()
+            .ok()
+            .map(|o| {
+                String::from_utf8_lossy(&o.stdout)
+                    .lines()
+                    .filter(|l| !l.trim().is_empty())
+                    .count()
+                    .saturating_sub(1) as u32 // subtract header
+            })
+            .unwrap_or(0);
+
+        Ok(ProcessResources {
+            pid,
+            cpu_pct,
+            mem_rss_kb,
+            mem_vms_kb,
+            open_fds,
+            threads,
+        })
+    }
+
+    fn net_config(&self) -> Result<NetConfig> {
+        // Routes: netstat -rn -f inet
+        let routes = {
+            let stdout = std::process::Command::new("netstat")
+                .args(["-rn", "-f", "inet"])
+                .output()
+                .map(|o| o.stdout)
+                .unwrap_or_default();
+            let text = String::from_utf8_lossy(&stdout);
+            let mut routes = Vec::new();
+            let mut in_table = false;
+            for line in text.lines() {
+                if line.starts_with("Destination") {
+                    in_table = true;
+                    continue;
+                }
+                if !in_table {
+                    continue;
+                }
+                let cols: Vec<&str> = line.split_whitespace().collect();
+                if cols.len() < 4 {
+                    continue;
+                }
+                routes.push(crate::model::RouteEntry {
+                    destination: cols[0].to_string(),
+                    gateway: cols[1].to_string(),
+                    flags: cols[2].to_string(),
+                    interface: cols.get(5).unwrap_or(&cols[cols.len() - 1]).to_string(),
+                    metric: 0,
+                });
+            }
+            routes
+        };
+
+        // DNS: /etc/resolv.conf
+        let (dns_servers, dns_search) = {
+            let content = std::fs::read_to_string("/etc/resolv.conf").unwrap_or_default();
+            let mut servers = Vec::new();
+            let mut search = Vec::new();
+            for line in content.lines() {
+                let line = line.trim();
+                if let Some(rest) = line.strip_prefix("nameserver") {
+                    if let Some(s) = rest.split_whitespace().next() {
+                        servers.push(s.to_string());
+                    }
+                } else if let Some(rest) = line.strip_prefix("search") {
+                    for s in rest.split_whitespace() {
+                        search.push(s.to_string());
+                    }
+                }
+            }
+            (servers, search)
+        };
+
+        // Hostname
+        let hostname = std::process::Command::new("hostname")
+            .output()
+            .ok()
+            .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+            .unwrap_or_default();
+
+        // Interface addresses: parse ifconfig
+        let interfaces = {
+            let stdout = std::process::Command::new("ifconfig")
+                .output()
+                .map(|o| o.stdout)
+                .unwrap_or_default();
+            let text = String::from_utf8_lossy(&stdout);
+            let mut iface_map: std::collections::BTreeMap<String, Vec<String>> =
+                std::collections::BTreeMap::new();
+            let mut current_iface = String::new();
+
+            for line in text.lines() {
+                if !line.starts_with('\t') && !line.starts_with(' ') {
+                    // Interface line: "en0: flags=..."
+                    if let Some(name) = line.split(':').next() {
+                        current_iface = name.trim().to_string();
+                        iface_map.entry(current_iface.clone()).or_default();
+                    }
+                } else {
+                    let trimmed = line.trim();
+                    if trimmed.starts_with("inet ") {
+                        let parts: Vec<&str> = trimmed.split_whitespace().collect();
+                        if let Some(addr) = parts.get(1) {
+                            // Build CIDR from netmask if available
+                            let netmask =
+                                parts.windows(2).find(|w| w[0] == "netmask").map(|w| w[1]);
+                            let cidr = netmask
+                                .and_then(|m| {
+                                    let hex = m.trim_start_matches("0x");
+                                    let mask_int = u32::from_str_radix(hex, 16).ok()?;
+                                    Some(mask_int.count_ones())
+                                })
+                                .map(|prefix| format!("{}/{}", addr, prefix))
+                                .unwrap_or_else(|| addr.to_string());
+                            iface_map
+                                .entry(current_iface.clone())
+                                .or_default()
+                                .push(cidr);
+                        }
+                    } else if trimmed.starts_with("inet6 ") {
+                        let parts: Vec<&str> = trimmed.split_whitespace().collect();
+                        if let Some(addr) = parts.get(1) {
+                            let prefix = parts
+                                .windows(2)
+                                .find(|w| w[0] == "prefixlen")
+                                .and_then(|w| w[1].parse::<u32>().ok())
+                                .map(|p| format!("{}/{}", addr, p))
+                                .unwrap_or_else(|| addr.to_string());
+                            iface_map
+                                .entry(current_iface.clone())
+                                .or_default()
+                                .push(prefix);
+                        }
+                    }
+                }
+            }
+
+            iface_map
+                .into_iter()
+                .map(|(name, addrs)| crate::model::InterfaceAddr { name, addrs })
+                .collect()
+        };
+
+        Ok(crate::model::NetConfig {
+            routes,
+            dns_servers,
+            dns_search,
+            hostname,
+            interfaces,
+        })
+    }
 }

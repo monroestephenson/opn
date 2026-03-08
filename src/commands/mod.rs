@@ -1,11 +1,16 @@
+pub mod bandwidth;
+pub mod capture;
 pub mod deleted;
 pub mod diagnose;
 pub mod file;
 pub mod firewall;
 pub mod interfaces;
 pub mod kill;
+pub mod logs;
+pub mod netconfig;
 pub mod pid;
 pub mod port;
+pub mod resources;
 pub mod snapshot;
 pub mod snmp;
 pub mod sockets;

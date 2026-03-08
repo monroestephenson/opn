@@ -5,6 +5,12 @@ use anyhow::{bail, Result};
 use super::Platform;
 use crate::model::*;
 
+impl Default for MockPlatform {
+    fn default() -> Self {
+        Self::empty()
+    }
+}
+
 pub struct MockPlatform {
     pids: Vec<u32>,
     sockets: Vec<SocketEntry>,
@@ -149,5 +155,26 @@ impl Platform for MockPlatform {
 
     fn kill_process(&self, _pid: u32, _signal: KillSignal) -> Result<()> {
         Ok(())
+    }
+
+    fn process_resources(&self, pid: u32) -> Result<ProcessResources> {
+        Ok(ProcessResources {
+            pid,
+            cpu_pct: 0.0,
+            mem_rss_kb: 0,
+            mem_vms_kb: 0,
+            open_fds: 0,
+            threads: 0,
+        })
+    }
+
+    fn net_config(&self) -> Result<NetConfig> {
+        Ok(NetConfig {
+            routes: vec![],
+            dns_servers: vec![],
+            dns_search: vec![],
+            hostname: String::new(),
+            interfaces: vec![],
+        })
     }
 }

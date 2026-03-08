@@ -648,6 +648,206 @@ impl Platform for LinuxPlatform {
             curr_estab: get_val(&header, &values, "CurrEstab"),
         }))
     }
+
+    fn process_resources(&self, pid: u32) -> Result<ProcessResources> {
+        // Parse /proc/[pid]/status for memory and threads
+        let status =
+            fs::read_to_string(format!("/proc/{}/status", pid)).context("process not found")?;
+
+        let mut mem_rss_kb: u64 = 0;
+        let mut mem_vms_kb: u64 = 0;
+        let mut threads: u32 = 0;
+
+        for line in status.lines() {
+            if let Some(rest) = line.strip_prefix("VmRSS:") {
+                mem_rss_kb = rest
+                    .split_whitespace()
+                    .next()
+                    .and_then(|s| s.parse().ok())
+                    .unwrap_or(0);
+            } else if let Some(rest) = line.strip_prefix("VmSize:") {
+                mem_vms_kb = rest
+                    .split_whitespace()
+                    .next()
+                    .and_then(|s| s.parse().ok())
+                    .unwrap_or(0);
+            } else if let Some(rest) = line.strip_prefix("Threads:") {
+                threads = rest
+                    .split_whitespace()
+                    .next()
+                    .and_then(|s| s.parse().ok())
+                    .unwrap_or(0);
+            }
+        }
+
+        // Count open FDs
+        let open_fds = fs::read_dir(format!("/proc/{}/fd", pid))
+            .map(|rd| rd.filter(|e| e.is_ok()).count() as u32)
+            .unwrap_or(0);
+
+        // Measure CPU usage: read utime+stime at T1, sleep 100ms, read at T2
+        let clk_tck = unsafe { libc::sysconf(libc::_SC_CLK_TCK) };
+        let clk_tck = if clk_tck <= 0 { 100 } else { clk_tck as u64 };
+
+        fn read_cpu_ticks(pid: u32) -> Option<u64> {
+            let stat = fs::read_to_string(format!("/proc/{}/stat", pid)).ok()?;
+            // Fields are after the comm (process name in parens)
+            let after_comm = stat.rfind(") ")? + 2;
+            let fields: Vec<&str> = stat[after_comm..].split_whitespace().collect();
+            // utime is field index 11 (after_comm field 11), stime is 12
+            // (0-indexed from after_comm: field[11]=utime, field[12]=stime, where first field after ')' is state=0)
+            let utime: u64 = fields.get(11).and_then(|s| s.parse().ok()).unwrap_or(0);
+            let stime: u64 = fields.get(12).and_then(|s| s.parse().ok()).unwrap_or(0);
+            Some(utime + stime)
+        }
+
+        let t1_ticks = read_cpu_ticks(pid).unwrap_or(0);
+        std::thread::sleep(std::time::Duration::from_millis(100));
+        let t2_ticks = read_cpu_ticks(pid).unwrap_or(0);
+
+        let delta = t2_ticks.saturating_sub(t1_ticks);
+        let cpu_pct = (delta as f64 / (0.1 * clk_tck as f64)) * 100.0;
+
+        Ok(ProcessResources {
+            pid,
+            cpu_pct,
+            mem_rss_kb,
+            mem_vms_kb,
+            open_fds,
+            threads,
+        })
+    }
+
+    fn net_config(&self) -> Result<NetConfig> {
+        // Routes: parse `ip route show`
+        let routes = {
+            let stdout = std::process::Command::new("ip")
+                .args(["route", "show"])
+                .output()
+                .map(|o| o.stdout)
+                .unwrap_or_default();
+            let text = String::from_utf8_lossy(&stdout);
+            let mut routes = Vec::new();
+            for line in text.lines() {
+                let parts: Vec<&str> = line.split_whitespace().collect();
+                if parts.is_empty() {
+                    continue;
+                }
+                let destination = parts[0].to_string();
+                let gateway = parts
+                    .windows(2)
+                    .find(|w| w[0] == "via")
+                    .map(|w| w[1].to_string())
+                    .unwrap_or_else(|| String::from("*"));
+                let interface = parts
+                    .windows(2)
+                    .find(|w| w[0] == "dev")
+                    .map(|w| w[1].to_string())
+                    .unwrap_or_default();
+                let metric = parts
+                    .windows(2)
+                    .find(|w| w[0] == "metric")
+                    .and_then(|w| w[1].parse().ok())
+                    .unwrap_or(0);
+                routes.push(crate::model::RouteEntry {
+                    destination,
+                    gateway,
+                    interface,
+                    flags: String::new(),
+                    metric,
+                });
+            }
+            routes
+        };
+
+        // DNS: parse /etc/resolv.conf
+        let (dns_servers, dns_search) = {
+            let content = fs::read_to_string("/etc/resolv.conf").unwrap_or_default();
+            let mut servers = Vec::new();
+            let mut search = Vec::new();
+            for line in content.lines() {
+                let line = line.trim();
+                if let Some(rest) = line.strip_prefix("nameserver") {
+                    if let Some(s) = rest.split_whitespace().next() {
+                        servers.push(s.to_string());
+                    }
+                } else if let Some(rest) = line.strip_prefix("search") {
+                    for s in rest.split_whitespace() {
+                        search.push(s.to_string());
+                    }
+                }
+            }
+            (servers, search)
+        };
+
+        // Hostname
+        let hostname = fs::read_to_string("/etc/hostname")
+            .unwrap_or_default()
+            .trim()
+            .to_string();
+        let hostname = if hostname.is_empty() {
+            std::process::Command::new("hostname")
+                .output()
+                .ok()
+                .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+                .unwrap_or_default()
+        } else {
+            hostname
+        };
+
+        // Interface addresses: parse `ip -4 -6 addr show`
+        let interfaces = {
+            let stdout = std::process::Command::new("ip")
+                .args(["addr", "show"])
+                .output()
+                .map(|o| o.stdout)
+                .unwrap_or_default();
+            let text = String::from_utf8_lossy(&stdout);
+            let mut iface_map: std::collections::BTreeMap<String, Vec<String>> =
+                std::collections::BTreeMap::new();
+            let mut current_iface = String::new();
+
+            for line in text.lines() {
+                if line.starts_with(|c: char| c.is_ascii_digit()) {
+                    // e.g. "2: eth0: <BROADCAST..."
+                    if let Some(name) = line.split(':').nth(1) {
+                        current_iface = name.trim().to_string();
+                        iface_map.entry(current_iface.clone()).or_default();
+                    }
+                } else {
+                    let trimmed = line.trim();
+                    if let Some(rest) = trimmed.strip_prefix("inet ") {
+                        if let Some(addr) = rest.split_whitespace().next() {
+                            iface_map
+                                .entry(current_iface.clone())
+                                .or_default()
+                                .push(addr.to_string());
+                        }
+                    } else if let Some(rest) = trimmed.strip_prefix("inet6 ") {
+                        if let Some(addr) = rest.split_whitespace().next() {
+                            iface_map
+                                .entry(current_iface.clone())
+                                .or_default()
+                                .push(addr.to_string());
+                        }
+                    }
+                }
+            }
+
+            iface_map
+                .into_iter()
+                .map(|(name, addrs)| crate::model::InterfaceAddr { name, addrs })
+                .collect()
+        };
+
+        Ok(crate::model::NetConfig {
+            routes,
+            dns_servers,
+            dns_search,
+            hostname,
+            interfaces,
+        })
+    }
 }
 
 #[cfg(test)]

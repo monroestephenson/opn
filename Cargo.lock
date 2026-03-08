@@ -447,6 +447,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "dns-lookup"
+version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "96b7f8a0dec8296e888249906bd70981bde4532f3f3fd96d7b5ea5a030ba4741"
+dependencies = [
+ "libc",
+]
+
+[[package]]
 name = "document-features"
 version = "0.2.12"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -759,13 +768,14 @@ checksum = "d6790f58c7ff633d8771f42965289203411a5e5c68388703c06e14f24770b41e"
 
 [[package]]
 name = "open-tool"
-version = "0.2.1"
+version = "0.3.0"
 dependencies = [
  "anyhow",
  "clap",
  "clap_mangen",
  "criterion",
  "crossterm 0.29.0",
+ "dns-lookup",
  "libc",
  "libproc",
  "netstat2",

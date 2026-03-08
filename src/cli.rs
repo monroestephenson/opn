@@ -146,6 +146,54 @@ pub enum Command {
         #[command(subcommand)]
         action: FirewallAction,
     },
+
+    /// Show CPU/memory/fd stats for processes with open sockets.
+    Resources {
+        #[command(flatten)]
+        filter: FilterArgs,
+    },
+
+    /// Show network configuration: routes, DNS, interface addresses.
+    Netconfig,
+
+    /// Analyze network-related log entries.
+    Logs {
+        /// Log type: auth, system, kernel, web, firewall, all.
+        #[arg(long, default_value = "all")]
+        log_type: String,
+        /// Number of lines to read from log.
+        #[arg(long, default_value_t = 200)]
+        lines: usize,
+        /// Filter string (grep-style substring match).
+        #[arg(long)]
+        filter: Option<String>,
+    },
+
+    /// Measure network bandwidth by polling interface stats.
+    Bandwidth {
+        /// Measurement duration in seconds (1-30).
+        #[arg(long, default_value_t = 1, value_parser = clap::value_parser!(u64).range(1..=30))]
+        duration: u64,
+    },
+
+    /// Capture and summarize network packets (wraps tcpdump).
+    Capture {
+        /// Network interface (default: auto).
+        #[arg(long)]
+        interface: Option<String>,
+        /// Filter by port.
+        #[arg(long)]
+        port: Option<u16>,
+        /// Filter by host IP.
+        #[arg(long)]
+        host: Option<String>,
+        /// Max packets to capture.
+        #[arg(long, default_value_t = 100)]
+        count: u32,
+        /// Stop after this many seconds.
+        #[arg(long, default_value_t = 5, value_parser = clap::value_parser!(u64).range(1..=60))]
+        duration: u64,
+    },
 }
 
 #[derive(Subcommand, Debug)]

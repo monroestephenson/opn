@@ -37,7 +37,8 @@ fn render_sockets_llm(
         .iter()
         .map(|s| {
             let ancestry = platform.process_ancestry(s.process.pid).unwrap_or_default();
-            socket_to_agent(s, ancestry)
+            // resolve=true since this helper is only called in --llm mode
+            socket_to_agent(s, ancestry, true)
         })
         .collect();
     let hints = detect_anomalies(&agent_sockets, &[]);
@@ -163,10 +164,16 @@ fn has_all_flag(cli: &Cli) -> bool {
         Command::Snapshot { filter, .. } => filter.all,
         Command::Diff { filter, .. } => filter.all,
         Command::Diagnose { filter } => filter.all,
+        Command::Resources { filter } => filter.all,
         // These commands don't have filter args
-        Command::Kill { .. } | Command::Interfaces | Command::Snmp | Command::Firewall { .. } => {
-            false
-        }
+        Command::Kill { .. }
+        | Command::Interfaces
+        | Command::Snmp
+        | Command::Firewall { .. }
+        | Command::Netconfig
+        | Command::Logs { .. }
+        | Command::Bandwidth { .. }
+        | Command::Capture { .. } => false,
     }
 }
 
@@ -342,6 +349,40 @@ fn main() -> ExitCode {
             }
             commands::firewall::run(action, cli.llm, cli.allow_write)
         }
+        Command::Resources { filter } => {
+            let qf = QueryFilter::from(filter);
+            commands::resources::run(&platform, &qf, cli.llm, cli.allow_write)
+        }
+        Command::Netconfig => commands::netconfig::run(&platform, cli.llm, cli.allow_write),
+        Command::Logs {
+            log_type,
+            lines,
+            filter,
+        } => commands::logs::run(
+            log_type,
+            *lines,
+            filter.as_deref(),
+            cli.llm,
+            cli.allow_write,
+        ),
+        Command::Bandwidth { duration } => {
+            commands::bandwidth::run(&platform, *duration, cli.llm, cli.allow_write)
+        }
+        Command::Capture {
+            interface,
+            port,
+            host,
+            count,
+            duration,
+        } => commands::capture::run(
+            interface.as_deref(),
+            *port,
+            host.as_deref(),
+            *count,
+            *duration,
+            cli.llm,
+            cli.allow_write,
+        ),
     };
 
     match result {

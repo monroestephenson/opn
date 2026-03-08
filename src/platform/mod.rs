@@ -1,8 +1,8 @@
 use anyhow::Result;
 
 use crate::model::{
-    InterfaceStats, KillSignal, OpenFile, ProcessAncestor, ProcessInfo, QueryFilter, SocketEntry,
-    TcpMetrics,
+    InterfaceStats, KillSignal, NetConfig, OpenFile, ProcessAncestor, ProcessInfo,
+    ProcessResources, QueryFilter, SocketEntry, TcpMetrics,
 };
 
 pub trait Platform: Send + Sync {
@@ -17,6 +17,8 @@ pub trait Platform: Send + Sync {
     fn interface_stats(&self) -> Result<Vec<InterfaceStats>>;
     fn tcp_metrics(&self) -> Result<Option<TcpMetrics>>;
     fn kill_process(&self, pid: u32, signal: KillSignal) -> Result<()>;
+    fn process_resources(&self, pid: u32) -> Result<ProcessResources>;
+    fn net_config(&self) -> Result<NetConfig>;
 }
 
 #[cfg(target_os = "macos")]

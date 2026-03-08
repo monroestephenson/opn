@@ -19,7 +19,11 @@
       "Bash(gh auth:*)",
       "Bash(mkdir:*)",
       "Bash(gh run:*)",
-      "Bash(./target/debug/opn:*)"
+      "Bash(./target/debug/opn:*)",
+      "Bash(cargo doc:*)",
+      "Bash(xargs ls -la)",
+      "Bash(git merge:*)",
+      "Bash(ps:*)"
     ]
   }
 }

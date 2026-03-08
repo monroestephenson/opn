@@ -159,6 +159,40 @@ pub struct QueryFilter {
     pub all: bool,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ProcessResources {
+    pub pid: u32,
+    pub cpu_pct: f64,
+    pub mem_rss_kb: u64,
+    pub mem_vms_kb: u64,
+    pub open_fds: u32,
+    pub threads: u32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RouteEntry {
+    pub destination: String,
+    pub gateway: String,
+    pub interface: String,
+    pub flags: String,
+    pub metric: u32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct InterfaceAddr {
+    pub name: String,
+    pub addrs: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct NetConfig {
+    pub routes: Vec<RouteEntry>,
+    pub dns_servers: Vec<String>,
+    pub dns_search: Vec<String>,
+    pub hostname: String,
+    pub interfaces: Vec<InterfaceAddr>,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

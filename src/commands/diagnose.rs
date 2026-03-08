@@ -19,7 +19,7 @@ pub fn run(
         .iter()
         .map(|s| {
             let ancestry = platform.process_ancestry(s.process.pid).unwrap_or_default();
-            agent::socket_to_agent(s, ancestry)
+            agent::socket_to_agent(s, ancestry, llm)
         })
         .collect();
 
