@@ -15,6 +15,14 @@ pub struct Cli {
     /// Output results as JSON instead of a table.
     #[arg(long, global = true)]
     pub json: bool,
+
+    /// Output in LLM-optimized compact JSON with self-describing actions.
+    #[arg(long = "llm", global = true)]
+    pub llm: bool,
+
+    /// Enable write operations: kill, firewall. Handle with care.
+    #[arg(long, global = true)]
+    pub allow_write: bool,
 }
 
 #[derive(Subcommand, Debug)]
@@ -83,6 +91,89 @@ pub enum Command {
         #[command(flatten)]
         filter: FilterArgs,
     },
+
+    /// Kill a process by PID.
+    Kill {
+        /// PID to terminate.
+        pid: u32,
+        /// Signal to send (TERM, KILL, HUP, INT).
+        #[arg(long, default_value = "TERM")]
+        signal: String,
+    },
+
+    /// Kill all processes listening on a port.
+    KillPort {
+        /// Port number.
+        port: u16,
+        /// Signal to send.
+        #[arg(long, default_value = "TERM")]
+        signal: String,
+        #[command(flatten)]
+        filter: FilterArgs,
+    },
+
+    /// Take a point-in-time snapshot of network state.
+    Snapshot {
+        /// Write snapshot JSON to this file (default: stdout).
+        #[arg(long)]
+        out: Option<std::path::PathBuf>,
+        #[command(flatten)]
+        filter: FilterArgs,
+    },
+
+    /// Show what changed since a previous snapshot.
+    Diff {
+        /// Path to snapshot file created with `opn snapshot`.
+        snapshot: std::path::PathBuf,
+        #[command(flatten)]
+        filter: FilterArgs,
+    },
+
+    /// Show network interface statistics.
+    Interfaces,
+
+    /// Show TCP/IP stack health metrics (Linux only).
+    Snmp,
+
+    /// Full network diagnostic: sockets + interfaces + metrics + anomalies in one call.
+    Diagnose {
+        #[command(flatten)]
+        filter: FilterArgs,
+    },
+
+    /// Manage firewall rules (requires --allow-write).
+    Firewall {
+        #[command(subcommand)]
+        action: FirewallAction,
+    },
+}
+
+#[derive(Subcommand, Debug)]
+pub enum FirewallAction {
+    /// List current opn firewall rules.
+    List,
+    /// Block an IP address.
+    BlockIp {
+        ip: String,
+        #[arg(long)]
+        comment: Option<String>,
+        /// Rule TTL in seconds (informational only, not auto-expired).
+        #[arg(long)]
+        ttl: Option<u64>,
+    },
+    /// Block a port.
+    BlockPort {
+        port: u16,
+        /// Direction: in or out.
+        #[arg(long, default_value = "in")]
+        dir: String,
+    },
+    /// Remove a rule by IP or comment.
+    Unblock { target: String },
+    /// Flush all opn firewall rules.
+    Flush,
+    /// Undo the last firewall action.
+    Undo,
 }
 
 #[derive(Debug, Clone, Copy, ValueEnum, PartialEq, Eq)]

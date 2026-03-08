@@ -1,3 +1,4 @@
+mod agent;
 mod cli;
 mod commands;
 mod model;
@@ -14,10 +15,76 @@ use clap::Parser;
 use serde::Serialize;
 use std::process::ExitCode;
 
+use agent::{
+    build_actions, caps, current_ts, detect_anomalies, file_to_agent, print_agent_response,
+    socket_to_agent, AgentResponse,
+};
 use cli::{Cli, Command};
-use model::QueryFilter;
-use platform::create_platform;
+use model::{KillSignal, OpenFile, QueryFilter, SocketEntry};
+use platform::{create_platform, Platform};
 use render::RenderOutcome;
+
+// ── LLM rendering helpers ────────────────────────────────────────────────────
+
+fn render_sockets_llm(
+    platform: &dyn Platform,
+    mut sockets: Vec<SocketEntry>,
+    cmd: &str,
+    allow_write: bool,
+) -> anyhow::Result<RenderOutcome> {
+    commands::sort_sockets(&mut sockets);
+    let agent_sockets: Vec<_> = sockets
+        .iter()
+        .map(|s| {
+            let ancestry = platform.process_ancestry(s.process.pid).unwrap_or_default();
+            socket_to_agent(s, ancestry)
+        })
+        .collect();
+    let hints = detect_anomalies(&agent_sockets, &[]);
+    let resp = AgentResponse {
+        schema: "opn-agent/1".to_string(),
+        ok: true,
+        ts: current_ts(),
+        cmd: cmd.to_string(),
+        caps: caps(allow_write),
+        data: Some(serde_json::to_value(&agent_sockets).unwrap_or_default()),
+        hints,
+        warnings: vec![],
+        actions: build_actions(allow_write),
+    };
+    print_agent_response(&resp);
+    Ok(if sockets.is_empty() {
+        RenderOutcome::NoResults
+    } else {
+        RenderOutcome::HasResults
+    })
+}
+
+fn render_files_llm(
+    files: Vec<OpenFile>,
+    cmd: &str,
+    allow_write: bool,
+) -> anyhow::Result<RenderOutcome> {
+    let agent_files: Vec<_> = files.iter().map(file_to_agent).collect();
+    let hints = detect_anomalies(&[], &agent_files);
+    let resp = AgentResponse {
+        schema: "opn-agent/1".to_string(),
+        ok: true,
+        ts: current_ts(),
+        cmd: cmd.to_string(),
+        caps: caps(allow_write),
+        data: Some(serde_json::to_value(&agent_files).unwrap_or_default()),
+        hints,
+        warnings: vec![],
+        actions: build_actions(allow_write),
+    };
+    print_agent_response(&resp);
+    Ok(if files.is_empty() {
+        RenderOutcome::NoResults
+    } else {
+        RenderOutcome::HasResults
+    })
+}
 
 #[derive(Debug, Clone, Copy, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -71,6 +138,19 @@ fn classify_error(message: &str) -> JsonError {
     }
 }
 
+fn write_guard_error(llm: bool) -> ExitCode {
+    let msg = "This command requires --allow-write. Re-run with: opn --allow-write <command>";
+    if llm {
+        println!(
+            "{}",
+            serde_json::json!({"schema":"opn-agent/1","ok":false,"error":msg})
+        );
+    } else {
+        eprintln!("error: {msg}");
+    }
+    ExitCode::from(2)
+}
+
 fn has_all_flag(cli: &Cli) -> bool {
     match &cli.command {
         Command::Port { filter, .. }
@@ -79,6 +159,14 @@ fn has_all_flag(cli: &Cli) -> bool {
         | Command::Deleted { filter }
         | Command::Sockets { filter } => filter.all,
         Command::Watch { filter, .. } => filter.all,
+        Command::KillPort { filter, .. } => filter.all,
+        Command::Snapshot { filter, .. } => filter.all,
+        Command::Diff { filter, .. } => filter.all,
+        Command::Diagnose { filter } => filter.all,
+        // These commands don't have filter args
+        Command::Kill { .. } | Command::Interfaces | Command::Snmp | Command::Firewall { .. } => {
+            false
+        }
     }
 }
 
@@ -109,23 +197,63 @@ fn main() -> ExitCode {
     let result = match &cli.command {
         Command::Port { port, filter } => {
             let qf = QueryFilter::from(filter);
-            commands::port::run(&platform, *port, &qf, cli.json)
+            if cli.llm {
+                (|| -> anyhow::Result<RenderOutcome> {
+                    let sockets = platform.find_by_port(*port, &qf)?;
+                    render_sockets_llm(&platform, sockets, &format!("port {port}"), cli.allow_write)
+                })()
+            } else {
+                commands::port::run(&platform, *port, &qf, cli.json)
+            }
         }
         Command::File { path, filter } => {
             let qf = QueryFilter::from(filter);
-            commands::file::run(&platform, path, &qf, cli.json)
+            if cli.llm {
+                (|| -> anyhow::Result<RenderOutcome> {
+                    crate::path_safety::validate_user_path(path)?;
+                    let files = platform.find_by_file(path, &qf)?;
+                    render_files_llm(files, &format!("file {path}"), cli.allow_write)
+                })()
+            } else {
+                commands::file::run(&platform, path, &qf, cli.json)
+            }
         }
         Command::Pid { pid, filter } => {
             let qf = QueryFilter::from(filter);
-            commands::pid::run(&platform, *pid, &qf, cli.json)
+            if cli.llm {
+                (|| -> anyhow::Result<RenderOutcome> {
+                    let known = platform.list_pids(&QueryFilter::default())?;
+                    if !known.contains(pid) {
+                        anyhow::bail!("PID {} not found", pid);
+                    }
+                    let files = platform.list_open_files(*pid)?;
+                    render_files_llm(files, &format!("pid {pid}"), cli.allow_write)
+                })()
+            } else {
+                commands::pid::run(&platform, *pid, &qf, cli.json)
+            }
         }
         Command::Deleted { filter } => {
             let qf = QueryFilter::from(filter);
-            commands::deleted::run(&platform, &qf, cli.json)
+            if cli.llm {
+                (|| -> anyhow::Result<RenderOutcome> {
+                    let files = platform.find_deleted(&qf)?;
+                    render_files_llm(files, "deleted", cli.allow_write)
+                })()
+            } else {
+                commands::deleted::run(&platform, &qf, cli.json)
+            }
         }
         Command::Sockets { filter } => {
             let qf = QueryFilter::from(filter);
-            commands::sockets::run(&platform, &qf, cli.json)
+            if cli.llm {
+                (|| -> anyhow::Result<RenderOutcome> {
+                    let sockets = platform.list_sockets(&qf)?;
+                    render_sockets_llm(&platform, sockets, "sockets", cli.allow_write)
+                })()
+            } else {
+                commands::sockets::run(&platform, &qf, cli.json)
+            }
         }
         Command::Watch {
             target,
@@ -162,13 +290,65 @@ fn main() -> ExitCode {
                 ))
             }
         }
+        Command::Kill { pid, signal } => {
+            if !cli.allow_write {
+                return write_guard_error(cli.llm);
+            }
+            match signal.parse::<KillSignal>() {
+                Ok(sig) => commands::kill::run_kill(&platform, *pid, sig, cli.llm, cli.allow_write),
+                Err(e) => Err(e),
+            }
+        }
+        Command::KillPort {
+            port,
+            signal,
+            filter,
+        } => {
+            if !cli.allow_write {
+                return write_guard_error(cli.llm);
+            }
+            match signal.parse::<KillSignal>() {
+                Ok(sig) => {
+                    let qf = QueryFilter::from(filter);
+                    commands::kill::run_kill_port(
+                        &platform,
+                        *port,
+                        sig,
+                        &qf,
+                        cli.llm,
+                        cli.allow_write,
+                    )
+                }
+                Err(e) => Err(e),
+            }
+        }
+        Command::Snapshot { out, filter } => {
+            let qf = QueryFilter::from(filter);
+            commands::snapshot::run_snapshot(&platform, &qf, out.as_deref())
+        }
+        Command::Diff { snapshot, filter } => {
+            let qf = QueryFilter::from(filter);
+            commands::snapshot::run_diff(snapshot, &platform, &qf, cli.llm)
+        }
+        Command::Interfaces => commands::interfaces::run(&platform, cli.llm, cli.allow_write),
+        Command::Snmp => commands::snmp::run(&platform, cli.llm, cli.allow_write),
+        Command::Diagnose { filter } => {
+            let qf = QueryFilter::from(filter);
+            commands::diagnose::run(&platform, &qf, cli.llm, cli.allow_write)
+        }
+        Command::Firewall { action } => {
+            if !cli.allow_write {
+                return write_guard_error(cli.llm);
+            }
+            commands::firewall::run(action, cli.llm, cli.allow_write)
+        }
     };
 
     match result {
         Ok(RenderOutcome::HasResults) => ExitCode::from(0),
         Ok(RenderOutcome::NoResults) => ExitCode::from(1),
         Err(err) => {
-            if cli.json {
+            if cli.json || cli.llm {
                 let payload = serde_json::json!({ "error": classify_error(&err.to_string()) });
                 println!("{payload}");
             } else {

@@ -18,7 +18,8 @@
       "Bash(cargo bench:*)",
       "Bash(gh auth:*)",
       "Bash(mkdir:*)",
-      "Bash(gh run:*)"
+      "Bash(gh run:*)",
+      "Bash(./target/debug/opn:*)"
     ]
   }
 }

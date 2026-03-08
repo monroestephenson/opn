@@ -134,4 +134,20 @@ impl Platform for MockPlatform {
             .cloned()
             .collect())
     }
+
+    fn process_ancestry(&self, _pid: u32) -> Result<Vec<ProcessAncestor>> {
+        Ok(vec![])
+    }
+
+    fn interface_stats(&self) -> Result<Vec<InterfaceStats>> {
+        Ok(vec![])
+    }
+
+    fn tcp_metrics(&self) -> Result<Option<TcpMetrics>> {
+        Ok(None)
+    }
+
+    fn kill_process(&self, _pid: u32, _signal: KillSignal) -> Result<()> {
+        Ok(())
+    }
 }

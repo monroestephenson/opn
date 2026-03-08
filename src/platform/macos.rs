@@ -1,5 +1,6 @@
 use anyhow::{Context, Result};
 use rayon::prelude::*;
+use std::collections::HashSet;
 use std::path::Path;
 use std::sync::Arc;
 
@@ -500,5 +501,84 @@ impl Platform for MacOsPlatform {
             .collect();
 
         Ok(results)
+    }
+
+    fn kill_process(&self, pid: u32, signal: KillSignal) -> Result<()> {
+        let ret = unsafe { libc::kill(pid as i32, signal.as_libc()) };
+        if ret != 0 {
+            let err = std::io::Error::last_os_error();
+            anyhow::bail!("Failed to send SIG{} to pid {}: {}", signal, pid, err);
+        }
+        Ok(())
+    }
+
+    fn process_ancestry(&self, pid: u32) -> Result<Vec<ProcessAncestor>> {
+        use libproc::bsd_info::BSDInfo;
+        use libproc::proc_pid;
+
+        let mut ancestors = Vec::new();
+        let mut current_pid = pid;
+        for _ in 0..16 {
+            let info = match proc_pid::pidinfo::<BSDInfo>(current_pid as i32, 0) {
+                Ok(i) => i,
+                Err(_) => break,
+            };
+            let ppid = info.pbi_ppid;
+            if ppid == 0 || ppid == current_pid {
+                break;
+            }
+            let name = proc_pid::name(ppid as i32).unwrap_or_else(|_| String::from("<unknown>"));
+            ancestors.push(ProcessAncestor { pid: ppid, name });
+            current_pid = ppid;
+        }
+        ancestors.reverse();
+        Ok(ancestors)
+    }
+
+    fn interface_stats(&self) -> Result<Vec<InterfaceStats>> {
+        let output = std::process::Command::new("netstat")
+            .args(["-i", "-b", "-n"])
+            .output()
+            .context("Failed to run netstat")?;
+        let text = String::from_utf8_lossy(&output.stdout);
+        let mut results = Vec::new();
+        let mut seen: HashSet<String> = HashSet::new();
+
+        for line in text.lines().skip(1) {
+            let cols: Vec<&str> = line.split_whitespace().collect();
+            // Name Mtu Network Address Ipkts Ierrs Ibytes Opkts Oerrs Obytes Coll
+            // 0    1   2       3       4     5     6      7     8     9      10
+            if cols.len() < 10 {
+                continue;
+            }
+            let name = cols[0].trim_end_matches('*').to_string();
+            if seen.contains(&name) {
+                continue;
+            }
+            let ipkts: u64 = cols[4].parse().unwrap_or(0);
+            let ierrs: u64 = cols[5].parse().unwrap_or(0);
+            let ibytes: u64 = cols[6].parse().unwrap_or(0);
+            let opkts: u64 = cols[7].parse().unwrap_or(0);
+            let oerrs: u64 = cols[8].parse().unwrap_or(0);
+            let obytes: u64 = cols[9].parse().unwrap_or(0);
+
+            seen.insert(name.clone());
+            results.push(InterfaceStats {
+                name,
+                rx_bytes: ibytes,
+                tx_bytes: obytes,
+                rx_packets: ipkts,
+                tx_packets: opkts,
+                rx_errors: ierrs,
+                tx_errors: oerrs,
+                rx_drop: 0,
+                tx_drop: 0,
+            });
+        }
+        Ok(results)
+    }
+
+    fn tcp_metrics(&self) -> Result<Option<TcpMetrics>> {
+        Ok(None)
     }
 }

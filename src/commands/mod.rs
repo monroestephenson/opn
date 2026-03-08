@@ -1,7 +1,13 @@
 pub mod deleted;
+pub mod diagnose;
 pub mod file;
+pub mod firewall;
+pub mod interfaces;
+pub mod kill;
 pub mod pid;
 pub mod port;
+pub mod snapshot;
+pub mod snmp;
 pub mod sockets;
 
 use crate::model::{Protocol, SocketEntry};
