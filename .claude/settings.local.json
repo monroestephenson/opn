@@ -15,7 +15,10 @@
       "Bash(cargo clippy:*)",
       "Bash(chmod +x:*)",
       "Bash(cargo fmt:*)",
-      "Bash(cargo bench:*)"
+      "Bash(cargo bench:*)",
+      "Bash(gh auth:*)",
+      "Bash(mkdir:*)",
+      "Bash(gh run:*)"
     ]
   }
 }

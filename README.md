@@ -84,6 +84,40 @@ opn watch --target file --file /tmp/demo.log
 | Speed | Slow (enumerates everything) | Fast (targeted queries) |
 | Cross-platform | Mostly Linux | Linux (`/proc`) + macOS (`libproc`/`netstat2`) |
 
+## Quick Benchmark
+
+Local macOS snapshot using `hyperfine -N --warmup 20`:
+
+| Scenario | Relative result (`opn` vs `lsof`) |
+|---------|------------------------------------|
+| `opn port 8080 --json` vs `lsof -i :8080 -P -n` | `3.11x` faster |
+| `opn port 8080` vs `lsof -i :8080 -P -n` | `3.20x` faster |
+| `opn sockets` vs `lsof -i -P -n` | `2.86x` faster |
+| `opn sockets --json` vs `lsof -i -P -n` | `2.92x` faster |
+| `opn pid <small pid>` vs `lsof -p <pid>` | roughly parity |
+| `opn pid <FD-heavy pid>` vs `lsof -p <pid>` | `3.06x` faster |
+| `opn deleted` vs `lsof +L1` | `12.13x` faster |
+
+FD-heavy PID benchmark setup used:
+
+```bash
+PID=$(
+  lsof -nP 2>/dev/null \
+    | awk 'NR>1 {count[$2]++} END {for (pid in count) print count[pid], pid}' \
+    | sort -nr \
+    | head -1 \
+    | awk '{print $2}'
+)
+
+echo "Benchmarking PID: $PID"
+
+hyperfine -N --warmup 20 --runs 200 \
+  "./target/release/opn pid $PID" \
+  "lsof -p $PID"
+```
+
+Results vary by OS, permissions, and workload size.
+
 ## Platform Support
 
 - **macOS**: Uses `libproc` for process enumeration and `netstat2` for socket info
