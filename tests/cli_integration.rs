@@ -1,6 +1,9 @@
 /// Integration tests for the `opn` CLI binary.
 /// These tests invoke the compiled binary and verify output behavior.
 
+use std::fs;
+use std::io::Write;
+use std::net::{TcpListener, UdpSocket};
 use std::process::Command;
 
 fn opn_cmd() -> Command {
@@ -482,4 +485,951 @@ fn test_file_symlink() {
         .expect("failed to run opn");
     // Should handle symlink resolution gracefully
     assert!(!String::from_utf8_lossy(&output.stderr).contains("panic"));
+}
+
+// ============================================================
+// End-to-end: real TCP listener + opn port lookup
+// ============================================================
+
+#[test]
+fn test_e2e_tcp_listener_found_by_port() {
+    // Bind to port 0 to get a random available port
+    let listener = TcpListener::bind("127.0.0.1:0").expect("failed to bind TCP listener");
+    let port = listener.local_addr().unwrap().port();
+    let my_pid = std::process::id();
+
+    let output = opn_cmd()
+        .args(["port", &port.to_string(), "--json"])
+        .output()
+        .expect("failed to run opn");
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let parsed: serde_json::Value =
+        serde_json::from_str(stdout.trim()).expect("invalid JSON output");
+
+    assert!(parsed.is_array(), "Expected JSON array");
+    let arr = parsed.as_array().unwrap();
+    assert!(
+        !arr.is_empty(),
+        "Expected at least one result for TCP port {}, got empty array",
+        port
+    );
+
+    // Verify our PID is in the results
+    let found_our_pid = arr.iter().any(|entry| {
+        entry["process"]["pid"]
+            .as_u64()
+            .map(|pid| pid == my_pid as u64)
+            .unwrap_or(false)
+    });
+    assert!(
+        found_our_pid,
+        "Expected to find our PID {} in results for port {}. Results: {}",
+        my_pid, port, stdout
+    );
+
+    // Verify the entry has the right port in local_addr
+    let found_port = arr.iter().any(|entry| {
+        entry["local_addr"]
+            .as_str()
+            .map(|addr| addr.ends_with(&format!(":{}", port)))
+            .unwrap_or(false)
+    });
+    assert!(
+        found_port,
+        "Expected local_addr to contain port {}. Results: {}",
+        port, stdout
+    );
+
+    // Verify protocol is TCP
+    let found_tcp = arr.iter().any(|entry| {
+        entry["protocol"]
+            .as_str()
+            .map(|p| p == "Tcp")
+            .unwrap_or(false)
+    });
+    assert!(found_tcp, "Expected protocol Tcp in results: {}", stdout);
+
+    // Keep listener alive until assertions are done
+    drop(listener);
+}
+
+#[test]
+fn test_e2e_tcp_listener_table_output() {
+    let listener = TcpListener::bind("127.0.0.1:0").expect("failed to bind TCP listener");
+    let port = listener.local_addr().unwrap().port();
+
+    let output = opn_cmd()
+        .args(["port", &port.to_string()])
+        .output()
+        .expect("failed to run opn");
+
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+
+    // Table output should contain headers
+    assert!(
+        stdout.contains("PROTO") && stdout.contains("LOCAL ADDRESS"),
+        "Expected table headers in output: {}",
+        stdout
+    );
+    // Should contain TCP and the port
+    assert!(
+        stdout.contains("TCP"),
+        "Expected TCP in table output: {}",
+        stdout
+    );
+    assert!(
+        stdout.contains(&port.to_string()),
+        "Expected port {} in table output: {}",
+        port, stdout
+    );
+
+    drop(listener);
+}
+
+#[test]
+fn test_e2e_tcp_listener_with_tcp_filter() {
+    let listener = TcpListener::bind("127.0.0.1:0").expect("failed to bind TCP listener");
+    let port = listener.local_addr().unwrap().port();
+
+    // With --tcp filter, should still find it
+    let output = opn_cmd()
+        .args(["port", &port.to_string(), "--tcp", "--json"])
+        .output()
+        .expect("failed to run opn");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let parsed: serde_json::Value = serde_json::from_str(stdout.trim()).expect("invalid JSON");
+    assert!(
+        !parsed.as_array().unwrap().is_empty(),
+        "TCP filter should still find the TCP listener on port {}",
+        port
+    );
+
+    // With --udp filter only, should NOT find it
+    let output_udp = opn_cmd()
+        .args(["port", &port.to_string(), "--udp", "--json"])
+        .output()
+        .expect("failed to run opn");
+    let stdout_udp = String::from_utf8_lossy(&output_udp.stdout);
+    let parsed_udp: serde_json::Value =
+        serde_json::from_str(stdout_udp.trim()).expect("invalid JSON");
+    assert!(
+        parsed_udp.as_array().unwrap().is_empty(),
+        "UDP filter should NOT find a TCP listener. Got: {}",
+        stdout_udp
+    );
+
+    drop(listener);
+}
+
+#[test]
+fn test_e2e_tcp_listener_closed_port_not_found() {
+    // Bind, get the port, then drop the listener
+    let port = {
+        let listener = TcpListener::bind("127.0.0.1:0").expect("failed to bind TCP listener");
+        let port = listener.local_addr().unwrap().port();
+        drop(listener); // Close the socket
+        port
+    };
+
+    // Small delay to let OS clean up
+    std::thread::sleep(std::time::Duration::from_millis(100));
+
+    let output = opn_cmd()
+        .args(["port", &port.to_string(), "--json"])
+        .output()
+        .expect("failed to run opn");
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let parsed: serde_json::Value = serde_json::from_str(stdout.trim()).expect("invalid JSON");
+    assert!(
+        parsed.as_array().unwrap().is_empty(),
+        "Closed port {} should have no listeners. Got: {}",
+        port, stdout
+    );
+}
+
+// ============================================================
+// End-to-end: real UDP socket + opn port lookup
+// ============================================================
+
+#[test]
+fn test_e2e_udp_socket_found_by_port() {
+    let socket = UdpSocket::bind("127.0.0.1:0").expect("failed to bind UDP socket");
+    let port = socket.local_addr().unwrap().port();
+    let my_pid = std::process::id();
+
+    let output = opn_cmd()
+        .args(["port", &port.to_string(), "--json"])
+        .output()
+        .expect("failed to run opn");
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let parsed: serde_json::Value =
+        serde_json::from_str(stdout.trim()).expect("invalid JSON output");
+
+    assert!(parsed.is_array());
+    let arr = parsed.as_array().unwrap();
+    assert!(
+        !arr.is_empty(),
+        "Expected at least one result for UDP port {}, got empty array",
+        port
+    );
+
+    // Verify our PID is in the results
+    let found_our_pid = arr.iter().any(|entry| {
+        entry["process"]["pid"]
+            .as_u64()
+            .map(|pid| pid == my_pid as u64)
+            .unwrap_or(false)
+    });
+    assert!(
+        found_our_pid,
+        "Expected to find our PID {} in UDP results for port {}. Results: {}",
+        my_pid, port, stdout
+    );
+
+    // Verify protocol is UDP
+    let found_udp = arr.iter().any(|entry| {
+        entry["protocol"]
+            .as_str()
+            .map(|p| p == "Udp")
+            .unwrap_or(false)
+    });
+    assert!(found_udp, "Expected protocol Udp in results: {}", stdout);
+
+    drop(socket);
+}
+
+#[test]
+fn test_e2e_udp_socket_with_udp_filter() {
+    let socket = UdpSocket::bind("127.0.0.1:0").expect("failed to bind UDP socket");
+    let port = socket.local_addr().unwrap().port();
+
+    // With --udp filter, should find it
+    let output = opn_cmd()
+        .args(["port", &port.to_string(), "--udp", "--json"])
+        .output()
+        .expect("failed to run opn");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let parsed: serde_json::Value = serde_json::from_str(stdout.trim()).expect("invalid JSON");
+    assert!(
+        !parsed.as_array().unwrap().is_empty(),
+        "UDP filter should find the UDP socket on port {}",
+        port
+    );
+
+    // With --tcp filter only, should NOT find it
+    let output_tcp = opn_cmd()
+        .args(["port", &port.to_string(), "--tcp", "--json"])
+        .output()
+        .expect("failed to run opn");
+    let stdout_tcp = String::from_utf8_lossy(&output_tcp.stdout);
+    let parsed_tcp: serde_json::Value =
+        serde_json::from_str(stdout_tcp.trim()).expect("invalid JSON");
+    assert!(
+        parsed_tcp.as_array().unwrap().is_empty(),
+        "TCP filter should NOT find a UDP socket. Got: {}",
+        stdout_tcp
+    );
+
+    drop(socket);
+}
+
+// ============================================================
+// End-to-end: TCP + UDP on same port
+// ============================================================
+
+#[test]
+fn test_e2e_tcp_and_udp_same_port() {
+    let tcp_listener = TcpListener::bind("127.0.0.1:0").expect("failed to bind TCP listener");
+    let port = tcp_listener.local_addr().unwrap().port();
+
+    // Bind UDP to the same port (TCP and UDP namespaces are separate)
+    let udp_socket = UdpSocket::bind(format!("127.0.0.1:{}", port))
+        .expect("failed to bind UDP socket to same port");
+
+    let output = opn_cmd()
+        .args(["port", &port.to_string(), "--json"])
+        .output()
+        .expect("failed to run opn");
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let parsed: serde_json::Value =
+        serde_json::from_str(stdout.trim()).expect("invalid JSON output");
+
+    let arr = parsed.as_array().unwrap();
+    assert!(
+        arr.len() >= 2,
+        "Expected at least 2 results (TCP + UDP) on port {}, got {}. Output: {}",
+        port,
+        arr.len(),
+        stdout
+    );
+
+    let has_tcp = arr
+        .iter()
+        .any(|e| e["protocol"].as_str() == Some("Tcp"));
+    let has_udp = arr
+        .iter()
+        .any(|e| e["protocol"].as_str() == Some("Udp"));
+    assert!(has_tcp, "Expected TCP entry for port {}", port);
+    assert!(has_udp, "Expected UDP entry for port {}", port);
+
+    drop(tcp_listener);
+    drop(udp_socket);
+}
+
+// ============================================================
+// End-to-end: PID lookup finds own process FDs
+// ============================================================
+
+#[test]
+fn test_e2e_pid_finds_own_open_files() {
+    let my_pid = std::process::id();
+
+    let output = opn_cmd()
+        .args(["pid", &my_pid.to_string(), "--json"])
+        .output()
+        .expect("failed to run opn");
+
+    assert!(
+        output.status.success(),
+        "opn pid {} should succeed. stderr: {}",
+        my_pid,
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let parsed: serde_json::Value =
+        serde_json::from_str(stdout.trim()).expect("invalid JSON output");
+
+    assert!(parsed.is_array());
+    // The test process should have at least stdin/stdout/stderr open
+    let arr = parsed.as_array().unwrap();
+    assert!(
+        !arr.is_empty(),
+        "Expected at least some open files for our PID {}. Got empty.",
+        my_pid
+    );
+}
+
+// ============================================================
+// End-to-end: JSON schema validation for port results
+// ============================================================
+
+#[test]
+fn test_e2e_port_json_schema() {
+    let listener = TcpListener::bind("127.0.0.1:0").expect("failed to bind TCP listener");
+    let port = listener.local_addr().unwrap().port();
+
+    let output = opn_cmd()
+        .args(["port", &port.to_string(), "--json"])
+        .output()
+        .expect("failed to run opn");
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let parsed: serde_json::Value = serde_json::from_str(stdout.trim()).expect("invalid JSON");
+    let arr = parsed.as_array().unwrap();
+    assert!(!arr.is_empty());
+
+    // Validate every entry has the expected fields
+    for entry in arr {
+        assert!(entry["protocol"].is_string(), "Missing protocol field");
+        assert!(entry["local_addr"].is_string(), "Missing local_addr field");
+        assert!(
+            entry["remote_addr"].is_string(),
+            "Missing remote_addr field"
+        );
+        assert!(entry["state"].is_string(), "Missing state field");
+        assert!(entry["process"].is_object(), "Missing process object");
+
+        let process = &entry["process"];
+        assert!(process["pid"].is_number(), "Missing process.pid");
+        assert!(process["name"].is_string(), "Missing process.name");
+        assert!(process["user"].is_string(), "Missing process.user");
+        assert!(process["uid"].is_number(), "Missing process.uid");
+        assert!(process["command"].is_string(), "Missing process.command");
+    }
+
+    drop(listener);
+}
+
+// ============================================================
+// End-to-end: JSON schema validation for pid results
+// ============================================================
+
+#[test]
+fn test_e2e_pid_json_schema() {
+    let my_pid = std::process::id();
+
+    let output = opn_cmd()
+        .args(["pid", &my_pid.to_string(), "--json"])
+        .output()
+        .expect("failed to run opn");
+
+    if !output.status.success() {
+        return; // skip if permissions prevent reading own fds
+    }
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let parsed: serde_json::Value = serde_json::from_str(stdout.trim()).expect("invalid JSON");
+    let arr = parsed.as_array().unwrap();
+
+    for entry in arr {
+        assert!(entry["fd"].is_number(), "Missing fd field");
+        assert!(entry["fd_type"].is_string(), "Missing fd_type field");
+        assert!(entry["path"].is_string(), "Missing path field");
+        assert!(entry["deleted"].is_boolean(), "Missing deleted field");
+        assert!(entry["process"].is_object(), "Missing process object");
+
+        let process = &entry["process"];
+        assert!(process["pid"].is_number(), "Missing process.pid");
+        assert!(process["name"].is_string(), "Missing process.name");
+    }
+}
+
+// ============================================================
+// End-to-end: multiple TCP listeners on different ports
+// ============================================================
+
+#[test]
+fn test_e2e_multiple_tcp_listeners_different_ports() {
+    let listener1 = TcpListener::bind("127.0.0.1:0").expect("failed to bind listener 1");
+    let port1 = listener1.local_addr().unwrap().port();
+
+    let listener2 = TcpListener::bind("127.0.0.1:0").expect("failed to bind listener 2");
+    let port2 = listener2.local_addr().unwrap().port();
+
+    // port1 should find listener1 but not listener2
+    let output1 = opn_cmd()
+        .args(["port", &port1.to_string(), "--json"])
+        .output()
+        .expect("failed to run opn");
+    let stdout1 = String::from_utf8_lossy(&output1.stdout);
+    let parsed1: serde_json::Value = serde_json::from_str(stdout1.trim()).expect("invalid JSON");
+    assert!(!parsed1.as_array().unwrap().is_empty());
+
+    // port2 should find listener2
+    let output2 = opn_cmd()
+        .args(["port", &port2.to_string(), "--json"])
+        .output()
+        .expect("failed to run opn");
+    let stdout2 = String::from_utf8_lossy(&output2.stdout);
+    let parsed2: serde_json::Value = serde_json::from_str(stdout2.trim()).expect("invalid JSON");
+    assert!(!parsed2.as_array().unwrap().is_empty());
+
+    // Verify they found different ports
+    let addr1 = parsed1.as_array().unwrap()[0]["local_addr"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let addr2 = parsed2.as_array().unwrap()[0]["local_addr"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    assert_ne!(addr1, addr2, "Different ports should produce different local_addr values");
+
+    drop(listener1);
+    drop(listener2);
+}
+
+// ============================================================
+// End-to-end: opn pid with a known open file
+// ============================================================
+
+#[test]
+fn test_e2e_pid_shows_open_tcp_socket() {
+    // Open a TCP listener, then use opn pid to verify the socket FD appears
+    let listener = TcpListener::bind("127.0.0.1:0").expect("failed to bind");
+    let my_pid = std::process::id();
+
+    let output = opn_cmd()
+        .args(["pid", &my_pid.to_string(), "--json"])
+        .output()
+        .expect("failed to run opn");
+
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let parsed: serde_json::Value = serde_json::from_str(stdout.trim()).expect("invalid JSON");
+    let arr = parsed.as_array().unwrap();
+
+    // Should find at least one Socket-type FD (our TCP listener)
+    let has_socket = arr.iter().any(|entry| {
+        entry["fd_type"]
+            .as_str()
+            .map(|t| t == "Socket")
+            .unwrap_or(false)
+    });
+    assert!(
+        has_socket,
+        "Expected to find a Socket FD for PID {} (has a TCP listener). Got: {}",
+        my_pid, stdout
+    );
+
+    drop(listener);
+}
+
+#[test]
+fn test_e2e_pid_table_output_has_headers() {
+    let my_pid = std::process::id();
+
+    let output = opn_cmd()
+        .args(["pid", &my_pid.to_string()])
+        .output()
+        .expect("failed to run opn");
+
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+
+    // Table output should contain the OpenFile headers
+    assert!(
+        stdout.contains("PID") && stdout.contains("TYPE") && stdout.contains("PATH"),
+        "Expected table headers PID/TYPE/PATH in output: {}",
+        stdout
+    );
+}
+
+#[test]
+fn test_e2e_pid_with_user_filter() {
+    let my_pid = std::process::id();
+
+    // With our own username, should still return results
+    let whoami = std::process::Command::new("whoami")
+        .output()
+        .expect("whoami failed");
+    let username = String::from_utf8_lossy(&whoami.stdout).trim().to_string();
+
+    let output = opn_cmd()
+        .args(["pid", &my_pid.to_string(), "--user", &username, "--json"])
+        .output()
+        .expect("failed to run opn");
+
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let parsed: serde_json::Value = serde_json::from_str(stdout.trim()).expect("invalid JSON");
+    let arr = parsed.as_array().unwrap();
+    assert!(
+        !arr.is_empty(),
+        "Filtering by our own username '{}' should return results for PID {}",
+        username, my_pid
+    );
+
+    // With a bogus username, should return empty
+    let output_bogus = opn_cmd()
+        .args([
+            "pid",
+            &my_pid.to_string(),
+            "--user",
+            "nonexistent_user_xyz",
+            "--json",
+        ])
+        .output()
+        .expect("failed to run opn");
+    let stdout_bogus = String::from_utf8_lossy(&output_bogus.stdout);
+    let parsed_bogus: serde_json::Value =
+        serde_json::from_str(stdout_bogus.trim()).expect("invalid JSON");
+    assert!(
+        parsed_bogus.as_array().unwrap().is_empty(),
+        "Bogus user filter should return empty for PID {}. Got: {}",
+        my_pid, stdout_bogus
+    );
+}
+
+// ============================================================
+// End-to-end: opn file finds a running executable
+// ============================================================
+
+#[test]
+fn test_e2e_file_finds_running_executable() {
+    // Start a long-running child process so we can look up its executable
+    let mut child = Command::new("sleep")
+        .arg("60")
+        .spawn()
+        .expect("failed to spawn sleep");
+
+    // /bin/sleep or /usr/bin/sleep — find the real path
+    let sleep_path_output = Command::new("which")
+        .arg("sleep")
+        .output()
+        .expect("failed to run which");
+    let sleep_path = String::from_utf8_lossy(&sleep_path_output.stdout)
+        .trim()
+        .to_string();
+
+    // Canonicalize to resolve symlinks (e.g., /bin -> /usr/bin on macOS)
+    let canonical_path = fs::canonicalize(&sleep_path)
+        .unwrap_or_else(|_| std::path::PathBuf::from(&sleep_path));
+
+    let output = opn_cmd()
+        .args(["file", canonical_path.to_str().unwrap(), "--json"])
+        .output()
+        .expect("failed to run opn");
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+
+    // On macOS, file lookup matches process executables
+    if output.status.success() && !stdout.trim().is_empty() {
+        let parsed: serde_json::Value =
+            serde_json::from_str(stdout.trim()).expect("invalid JSON");
+        let arr = parsed.as_array().unwrap();
+
+        // Should find at least the sleep process we spawned
+        let child_pid = child.id();
+        let found_child = arr.iter().any(|entry| {
+            entry["process"]["pid"]
+                .as_u64()
+                .map(|pid| pid == child_pid as u64)
+                .unwrap_or(false)
+        });
+        assert!(
+            found_child,
+            "Expected to find child PID {} (sleep) when looking up '{}'. Results: {}",
+            child_pid,
+            canonical_path.display(),
+            stdout
+        );
+    }
+    // If it didn't find anything, that's OK on platforms with limited file lookup
+    // but it shouldn't have panicked
+    assert!(
+        !stderr.contains("panic"),
+        "opn file should not panic: {}",
+        stderr
+    );
+
+    child.kill().ok();
+    child.wait().ok();
+}
+
+#[test]
+fn test_e2e_file_table_output() {
+    // Spawn sleep and look it up in table mode
+    let mut child = Command::new("sleep")
+        .arg("60")
+        .spawn()
+        .expect("failed to spawn sleep");
+
+    let sleep_path_output = Command::new("which")
+        .arg("sleep")
+        .output()
+        .expect("failed to run which");
+    let sleep_path = String::from_utf8_lossy(&sleep_path_output.stdout)
+        .trim()
+        .to_string();
+    let canonical_path = fs::canonicalize(&sleep_path)
+        .unwrap_or_else(|_| std::path::PathBuf::from(&sleep_path));
+
+    let output = opn_cmd()
+        .args(["file", canonical_path.to_str().unwrap()])
+        .output()
+        .expect("failed to run opn");
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+
+    if !stdout.trim().is_empty() {
+        // Table should have headers
+        assert!(
+            stdout.contains("PID") && stdout.contains("PROCESS"),
+            "Expected table headers in file output: {}",
+            stdout
+        );
+        // Should mention sleep
+        assert!(
+            stdout.contains("sleep"),
+            "Expected 'sleep' in file output: {}",
+            stdout
+        );
+    }
+
+    child.kill().ok();
+    child.wait().ok();
+}
+
+#[test]
+fn test_e2e_file_json_schema_validation() {
+    let mut child = Command::new("sleep")
+        .arg("60")
+        .spawn()
+        .expect("failed to spawn sleep");
+
+    let sleep_path_output = Command::new("which")
+        .arg("sleep")
+        .output()
+        .expect("failed to run which");
+    let sleep_path = String::from_utf8_lossy(&sleep_path_output.stdout)
+        .trim()
+        .to_string();
+    let canonical_path = fs::canonicalize(&sleep_path)
+        .unwrap_or_else(|_| std::path::PathBuf::from(&sleep_path));
+
+    let output = opn_cmd()
+        .args(["file", canonical_path.to_str().unwrap(), "--json"])
+        .output()
+        .expect("failed to run opn");
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    if !stdout.trim().is_empty() && stdout.trim() != "[]" {
+        let parsed: serde_json::Value =
+            serde_json::from_str(stdout.trim()).expect("invalid JSON");
+        let arr = parsed.as_array().unwrap();
+
+        for entry in arr {
+            assert!(entry["fd"].is_number(), "Missing fd field");
+            assert!(entry["fd_type"].is_string(), "Missing fd_type field");
+            assert!(entry["path"].is_string(), "Missing path field");
+            assert!(entry["deleted"].is_boolean(), "Missing deleted field");
+            assert!(entry["process"].is_object(), "Missing process object");
+            assert!(
+                entry["process"]["pid"].is_number(),
+                "Missing process.pid"
+            );
+            assert!(
+                entry["process"]["name"].is_string(),
+                "Missing process.name"
+            );
+            assert!(
+                entry["process"]["user"].is_string(),
+                "Missing process.user"
+            );
+        }
+    }
+
+    child.kill().ok();
+    child.wait().ok();
+}
+
+#[test]
+fn test_e2e_file_killed_process_not_found() {
+    // Start a process, get its executable path, kill it, then search — should not find it
+    let mut child = Command::new("sleep")
+        .arg("60")
+        .spawn()
+        .expect("failed to spawn sleep");
+    let child_pid = child.id();
+
+    let sleep_path_output = Command::new("which")
+        .arg("sleep")
+        .output()
+        .expect("failed to run which");
+    let sleep_path = String::from_utf8_lossy(&sleep_path_output.stdout)
+        .trim()
+        .to_string();
+    let canonical_path = fs::canonicalize(&sleep_path)
+        .unwrap_or_else(|_| std::path::PathBuf::from(&sleep_path));
+
+    // Kill the child first
+    child.kill().ok();
+    child.wait().ok();
+    std::thread::sleep(std::time::Duration::from_millis(100));
+
+    let output = opn_cmd()
+        .args(["file", canonical_path.to_str().unwrap(), "--json"])
+        .output()
+        .expect("failed to run opn");
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    if !stdout.trim().is_empty() && stdout.trim() != "[]" {
+        let parsed: serde_json::Value =
+            serde_json::from_str(stdout.trim()).expect("invalid JSON");
+        let arr = parsed.as_array().unwrap();
+        // The killed child should NOT be in results
+        let found_dead_child = arr.iter().any(|entry| {
+            entry["process"]["pid"]
+                .as_u64()
+                .map(|pid| pid == child_pid as u64)
+                .unwrap_or(false)
+        });
+        assert!(
+            !found_dead_child,
+            "Killed PID {} should not appear in results: {}",
+            child_pid, stdout
+        );
+    }
+}
+
+// ============================================================
+// End-to-end: opn deleted
+// ============================================================
+
+#[test]
+fn test_e2e_deleted_with_open_deleted_file() {
+    // Create a temp file, open it, delete it, then check opn deleted
+    let tmp_path = format!("/tmp/opn_test_deleted_{}", std::process::id());
+    {
+        let mut f = fs::File::create(&tmp_path).expect("failed to create temp file");
+        f.write_all(b"test data for deleted file detection")
+            .expect("failed to write");
+    }
+
+    // Open the file and keep the handle, then delete the path
+    let _held_file = fs::File::open(&tmp_path).expect("failed to open temp file");
+    fs::remove_file(&tmp_path).expect("failed to delete temp file");
+
+    let output = opn_cmd()
+        .args(["deleted", "--json"])
+        .output()
+        .expect("failed to run opn");
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+
+    if output.status.success() {
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let parsed: serde_json::Value =
+            serde_json::from_str(stdout.trim()).expect("invalid JSON");
+        assert!(parsed.is_array(), "Expected JSON array from deleted command");
+
+        // On Linux, this should find the deleted file held open by our process
+        // On macOS, find_deleted may not be implemented yet
+        let arr = parsed.as_array().unwrap();
+        if !arr.is_empty() {
+            // Validate schema of any results
+            for entry in arr {
+                assert!(entry["fd"].is_number(), "Missing fd");
+                assert!(entry["deleted"].as_bool() == Some(true), "deleted should be true");
+                assert!(entry["process"].is_object(), "Missing process");
+            }
+        }
+    } else {
+        // Acceptable: macOS returns "not yet implemented"
+        assert!(
+            stderr.contains("not yet implemented"),
+            "Expected either success or 'not yet implemented', got: {}",
+            stderr
+        );
+    }
+
+    // _held_file drops here, releasing the deleted file
+}
+
+#[test]
+fn test_e2e_deleted_json_is_valid() {
+    let output = opn_cmd()
+        .args(["deleted", "--json"])
+        .output()
+        .expect("failed to run opn");
+
+    if output.status.success() {
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let parsed: Result<serde_json::Value, _> = serde_json::from_str(stdout.trim());
+        assert!(
+            parsed.is_ok(),
+            "deleted --json should produce valid JSON: {}",
+            stdout
+        );
+        assert!(parsed.unwrap().is_array());
+    }
+}
+
+#[test]
+fn test_e2e_deleted_with_user_filter() {
+    let whoami = Command::new("whoami").output().expect("whoami failed");
+    let username = String::from_utf8_lossy(&whoami.stdout).trim().to_string();
+
+    let output = opn_cmd()
+        .args(["deleted", "--user", &username, "--json"])
+        .output()
+        .expect("failed to run opn");
+
+    if output.status.success() {
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let parsed: serde_json::Value =
+            serde_json::from_str(stdout.trim()).expect("invalid JSON");
+        let arr = parsed.as_array().unwrap();
+        // All results should belong to our user
+        for entry in arr {
+            let entry_user = entry["process"]["user"].as_str().unwrap_or("");
+            assert_eq!(
+                entry_user, username,
+                "User filter should only return entries for '{}', got '{}'",
+                username, entry_user
+            );
+        }
+    }
+}
+
+// ============================================================
+// End-to-end: opn pid with open file handle
+// ============================================================
+
+#[test]
+fn test_e2e_pid_shows_open_file_handle() {
+    // Open a known file and check opn pid shows it (or at least shows an FD)
+    let tmp_path = format!("/tmp/opn_test_pid_file_{}", std::process::id());
+    {
+        let mut f = fs::File::create(&tmp_path).expect("failed to create temp file");
+        f.write_all(b"test data").expect("failed to write");
+    }
+    let _held_file = fs::File::open(&tmp_path).expect("failed to open temp file");
+    let my_pid = std::process::id();
+
+    let output = opn_cmd()
+        .args(["pid", &my_pid.to_string(), "--json"])
+        .output()
+        .expect("failed to run opn");
+
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let parsed: serde_json::Value = serde_json::from_str(stdout.trim()).expect("invalid JSON");
+    let arr = parsed.as_array().unwrap();
+
+    // We should have more FDs now than just stdin/stdout/stderr
+    // At minimum: 0, 1, 2 + the held file + the TCP listener from other tests
+    assert!(
+        arr.len() >= 4,
+        "Expected at least 4 open FDs for PID {} (stdin/stdout/stderr + held file). Got {}. Output: {}",
+        my_pid,
+        arr.len(),
+        stdout
+    );
+
+    // Clean up
+    drop(_held_file);
+    fs::remove_file(&tmp_path).ok();
+}
+
+// ============================================================
+// End-to-end: verify port lookup finds correct process name
+// ============================================================
+
+#[test]
+fn test_e2e_port_shows_correct_process_name() {
+    let listener = TcpListener::bind("127.0.0.1:0").expect("failed to bind");
+    let port = listener.local_addr().unwrap().port();
+
+    let output = opn_cmd()
+        .args(["port", &port.to_string(), "--json"])
+        .output()
+        .expect("failed to run opn");
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let parsed: serde_json::Value = serde_json::from_str(stdout.trim()).expect("invalid JSON");
+    let arr = parsed.as_array().unwrap();
+    assert!(!arr.is_empty());
+
+    // The process name should be the test runner binary name (contains "opn" or "cli_integration")
+    let our_entry = arr.iter().find(|e| {
+        e["process"]["pid"]
+            .as_u64()
+            .map(|pid| pid == std::process::id() as u64)
+            .unwrap_or(false)
+    });
+    assert!(our_entry.is_some(), "Should find our PID in results");
+
+    let process_name = our_entry.unwrap()["process"]["name"]
+        .as_str()
+        .unwrap_or("");
+    assert!(
+        !process_name.is_empty(),
+        "Process name should not be empty"
+    );
+    // The process name should be a real name, not <unknown>
+    assert!(
+        process_name != "<unknown>",
+        "Process name should be resolved, not <unknown>"
+    );
+
+    drop(listener);
 }

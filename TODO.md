@@ -98,13 +98,16 @@
 - [ ] `--verbose` flag for debug-level logging to stderr
 
 ### Testing
-- [x] Unit tests for `/proc/net/tcp` hex parsing
-- [x] Unit tests for `FilterArgs` → `QueryFilter` conversion
-- [~] Integration tests with mock `Platform` impl
-- [ ] Integration tests with real platform (port listener + lookup)
-- [ ] CLI argument parsing tests (valid and invalid inputs)
-- [ ] JSON output schema validation tests
-- [ ] Table output formatting tests
+- [x] Unit tests for `/proc/net/tcp` hex parsing (47 tests)
+- [x] Unit tests for `FilterArgs` → `QueryFilter` conversion (10 tests)
+- [x] Unit tests for model serialization, Display, Clone (27 tests)
+- [x] Integration tests with mock `Platform` impl (13 tests)
+- [x] Integration tests with real TCP/UDP listeners (e2e port lookup, protocol filters, closed port)
+- [x] CLI argument parsing tests (valid and invalid inputs, 33 tests)
+- [x] JSON output schema validation tests (port + pid schemas)
+- [x] Table output formatting tests
+- [x] PID command tests (own process, nonexistent PID, filters)
+- [x] Deleted command tests (mock platform)
 - [ ] Cross-platform CI (Linux + macOS)
 - [ ] Benchmark tests
 

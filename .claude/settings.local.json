@@ -10,7 +10,8 @@
       "Bash(grep:*)",
       "Bash(cargo build:*)",
       "Bash(cargo test:*)",
-      "Bash(./target/debug/opn file:*)"
+      "Bash(./target/debug/opn file:*)",
+      "Bash(./target/debug/opn pid:*)"
     ]
   }
 }

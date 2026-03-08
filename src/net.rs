@@ -2,6 +2,8 @@
 
 use std::net::{Ipv4Addr, Ipv6Addr};
 
+use crate::model::Protocol;
+
 /// /proc/net/tcp stores IPv4 as a single little-endian 32-bit hex.
 /// e.g., "0100007F" => 127.0.0.1
 pub fn parse_proc_ipv4(hex: &str) -> Option<Ipv4Addr> {
@@ -82,6 +84,7 @@ pub fn parse_tcp_state(hex: &str) -> &'static str {
 /// Represents a parsed line from /proc/net/tcp or /proc/net/tcp6.
 #[derive(Debug, Clone)]
 pub struct ProcNetEntry {
+    pub protocol: Protocol,
     pub local_addr: String,
     pub local_port: u16,
     pub remote_addr: String,
@@ -104,6 +107,7 @@ pub fn parse_proc_net_tcp_line(line: &str) -> Option<ProcNetEntry> {
     let inode: u64 = fields[9].parse().ok()?;
 
     Some(ProcNetEntry {
+        protocol: Protocol::Tcp,
         local_addr: local_addr.to_string(),
         local_port,
         remote_addr: remote_addr.to_string(),
@@ -125,6 +129,7 @@ pub fn parse_proc_net_tcp6_line(line: &str) -> Option<ProcNetEntry> {
     let inode: u64 = fields[9].parse().ok()?;
 
     Some(ProcNetEntry {
+        protocol: Protocol::Tcp,
         local_addr: local_addr.to_string(),
         local_port,
         remote_addr: remote_addr.to_string(),
@@ -138,6 +143,7 @@ pub fn parse_proc_net_tcp6_line(line: &str) -> Option<ProcNetEntry> {
 pub fn parse_proc_net_udp_line(line: &str) -> Option<ProcNetEntry> {
     // Same format as tcp, but state is less meaningful
     parse_proc_net_tcp_line(line).map(|mut e| {
+        e.protocol = Protocol::Udp;
         // UDP states are different — 07 = established, others mostly unused
         // We just show the raw state or simplify
         e.state = if e.state == "CLOSE" { "UNCONN".to_string() } else { e.state };
@@ -148,6 +154,7 @@ pub fn parse_proc_net_udp_line(line: &str) -> Option<ProcNetEntry> {
 /// Parse a single line from /proc/net/udp6.
 pub fn parse_proc_net_udp6_line(line: &str) -> Option<ProcNetEntry> {
     parse_proc_net_tcp6_line(line).map(|mut e| {
+        e.protocol = Protocol::Udp;
         e.state = if e.state == "CLOSE" { "UNCONN".to_string() } else { e.state };
         e
     })

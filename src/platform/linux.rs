@@ -1,5 +1,6 @@
 use anyhow::{Context, Result};
 use rayon::prelude::*;
+use std::collections::HashSet;
 use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -119,10 +120,88 @@ impl LinuxPlatform {
             None
         }
     }
+
+    fn matches_process_filter(process: &ProcessInfo, filter: &QueryFilter) -> bool {
+        if let Some(filter_pid) = filter.pid {
+            if process.pid != filter_pid {
+                return false;
+            }
+        }
+        if let Some(user) = &filter.user {
+            if process.user != *user {
+                return false;
+            }
+        }
+        if let Some(process_name) = &filter.process_name {
+            if process.name != *process_name {
+                return false;
+            }
+        }
+        true
+    }
+
+    fn collect_sockets(&self, port_filter: Option<u16>, filter: &QueryFilter) -> Result<Vec<SocketEntry>> {
+        let inode_map = Self::build_inode_socket_map(port_filter, filter);
+        if inode_map.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        let pids = self.list_pids(filter)?;
+        let mut results = Vec::new();
+        let mut seen = HashSet::<(u32, u64)>::new();
+
+        for pid in pids {
+            let process = match self.process_info(pid) {
+                Ok(p) => p,
+                Err(_) => continue,
+            };
+            if !Self::matches_process_filter(&process, filter) {
+                continue;
+            }
+
+            let fd_dir = format!("/proc/{}/fd", pid);
+            let entries = match fs::read_dir(&fd_dir) {
+                Ok(e) => e,
+                Err(_) => continue,
+            };
+
+            for entry in entries {
+                let entry = match entry {
+                    Ok(e) => e,
+                    Err(_) => continue,
+                };
+
+                let target = match fs::read_link(entry.path()) {
+                    Ok(p) => p.to_string_lossy().to_string(),
+                    Err(_) => continue,
+                };
+
+                let Some(inode) = Self::extract_socket_inode(&target) else {
+                    continue;
+                };
+                let Some(net_entry) = inode_map.get(&inode) else {
+                    continue;
+                };
+                if !seen.insert((pid, inode)) {
+                    continue;
+                }
+
+                results.push(SocketEntry {
+                    protocol: net_entry.protocol.clone(),
+                    local_addr: format!("{}:{}", net_entry.local_addr, net_entry.local_port),
+                    remote_addr: format!("{}:{}", net_entry.remote_addr, net_entry.remote_port),
+                    state: net_entry.state.clone(),
+                    process: process.clone(),
+                });
+            }
+        }
+
+        Ok(results)
+    }
 }
 
 impl Platform for LinuxPlatform {
-    fn list_pids(&self, _filter: &QueryFilter) -> Result<Vec<u32>> {
+    fn list_pids(&self, filter: &QueryFilter) -> Result<Vec<u32>> {
         let mut pids = Vec::new();
         for entry in fs::read_dir("/proc").context("Failed to read /proc")? {
             let entry = match entry {
@@ -131,6 +210,11 @@ impl Platform for LinuxPlatform {
             };
             if let Some(name) = entry.file_name().to_str() {
                 if let Ok(pid) = name.parse::<u32>() {
+                    if let Some(filter_pid) = filter.pid {
+                        if pid != filter_pid {
+                            continue;
+                        }
+                    }
                     pids.push(pid);
                 }
             }
@@ -233,63 +317,11 @@ impl Platform for LinuxPlatform {
     }
 
     fn find_by_port(&self, port: u16, filter: &QueryFilter) -> Result<Vec<SocketEntry>> {
-        let inode_map = Self::build_inode_socket_map(Some(port), filter);
-        if inode_map.is_empty() {
-            return Ok(Vec::new());
-        }
-
-        let pids = self.list_pids(filter)?;
-        let mut results = Vec::new();
-
-        for &pid in &pids {
-            let fd_dir = format!("/proc/{}/fd", pid);
-            let entries = match fs::read_dir(&fd_dir) {
-                Ok(e) => e,
-                Err(_) => continue,
-            };
-
-            for entry in entries {
-                let entry = match entry {
-                    Ok(e) => e,
-                    Err(_) => continue,
-                };
-
-                let target = match fs::read_link(entry.path()) {
-                    Ok(p) => p.to_string_lossy().to_string(),
-                    Err(_) => continue,
-                };
-
-                if let Some(inode) = Self::extract_socket_inode(&target) {
-                    if let Some(net_entry) = inode_map.get(&inode) {
-                        let process = match self.process_info(pid) {
-                            Ok(p) => p,
-                            Err(_) => continue,
-                        };
-
-                        // Determine protocol from the file source
-                        let protocol = if net_entry.state == "UNCONN" {
-                            Protocol::Udp
-                        } else {
-                            Protocol::Tcp
-                        };
-
-                        results.push(SocketEntry {
-                            protocol,
-                            local_addr: format!("{}:{}", net_entry.local_addr, net_entry.local_port),
-                            remote_addr: format!("{}:{}", net_entry.remote_addr, net_entry.remote_port),
-                            state: net_entry.state.clone(),
-                            process,
-                        });
-                    }
-                }
-            }
-        }
-
-        Ok(results)
+        self.collect_sockets(Some(port), filter)
     }
 
-    fn list_sockets(&self, _filter: &QueryFilter) -> Result<Vec<SocketEntry>> {
-        anyhow::bail!("opn sockets: not yet implemented")
+    fn list_sockets(&self, filter: &QueryFilter) -> Result<Vec<SocketEntry>> {
+        self.collect_sockets(None, filter)
     }
 
     fn find_deleted(&self, filter: &QueryFilter) -> Result<Vec<OpenFile>> {
