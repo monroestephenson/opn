@@ -159,7 +159,13 @@ fn test_firewall_llm_write_guard_envelope() {
 #[test]
 fn test_firewall_invalid_ip_llm_has_error_envelope() {
     let output = opn_cmd()
-        .args(["--llm", "--allow-write", "firewall", "block-ip", "not-an-ip"])
+        .args([
+            "--llm",
+            "--allow-write",
+            "firewall",
+            "block-ip",
+            "not-an-ip",
+        ])
         .output()
         .expect("failed to run --llm --allow-write firewall block-ip");
     assert_non_error_exit(&output);
