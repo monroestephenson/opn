@@ -87,7 +87,7 @@ fn getnameinfo_lookup(ip: &str) -> Option<String> {
                 libc::getnameinfo(
                     &sa as *const libc::sockaddr_in as *const libc::sockaddr,
                     std::mem::size_of::<libc::sockaddr_in>() as libc::socklen_t,
-                    host_buf.as_mut_ptr(),
+                    host_buf.as_mut_ptr() as *mut libc::c_char,
                     host_buf.len() as libc::socklen_t,
                     std::ptr::null_mut(),
                     0,
@@ -109,7 +109,7 @@ fn getnameinfo_lookup(ip: &str) -> Option<String> {
                 libc::getnameinfo(
                     &sa as *const libc::sockaddr_in6 as *const libc::sockaddr,
                     std::mem::size_of::<libc::sockaddr_in6>() as libc::socklen_t,
-                    host_buf.as_mut_ptr(),
+                    host_buf.as_mut_ptr() as *mut libc::c_char,
                     host_buf.len() as libc::socklen_t,
                     std::ptr::null_mut(),
                     0,
@@ -123,7 +123,7 @@ fn getnameinfo_lookup(ip: &str) -> Option<String> {
         return None;
     }
 
-    let cstr = unsafe { std::ffi::CStr::from_ptr(host_buf.as_ptr()) };
+    let cstr = unsafe { std::ffi::CStr::from_ptr(host_buf.as_ptr() as *const libc::c_char) };
     let s = cstr.to_string_lossy().trim_end_matches('.').to_string();
     if s.is_empty() {
         None
