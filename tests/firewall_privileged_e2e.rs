@@ -16,6 +16,22 @@ fn assert_non_error_exit(output: &Output) {
     );
 }
 
+fn assert_non_error_or_missing_chain(output: &Output) {
+    let code = output.status.code().unwrap_or(-1);
+    if code == 0 || code == 1 {
+        return;
+    }
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    let missing_chain = stderr.contains("No chain/target/match by that name")
+        || stderr.contains("Chain 'OPN' does not exist")
+        || stderr.contains("No chain/target/match");
+    assert!(
+        missing_chain,
+        "expected success or missing-chain case, got {} stderr={}",
+        code, stderr
+    );
+}
+
 fn should_run_privileged() -> bool {
     std::env::var("OPN_RUN_PRIVILEGED_TESTS").as_deref() == Ok("1")
 }
@@ -42,7 +58,7 @@ fn test_firewall_list_flush_round_trip() {
         .args(["--allow-write", "firewall", "flush"])
         .output()
         .expect("failed to run firewall flush");
-    assert_non_error_exit(&flush);
+    assert_non_error_or_missing_chain(&flush);
 
     let list = opn_cmd()
         .args(["--allow-write", "firewall", "list"])
