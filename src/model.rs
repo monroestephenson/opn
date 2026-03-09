@@ -1,7 +1,7 @@
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProcessInfo {
     pub pid: u32,
     pub name: String,
@@ -10,7 +10,7 @@ pub struct ProcessInfo {
     pub command: String,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct OpenFile {
     pub process: Arc<ProcessInfo>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -22,7 +22,7 @@ pub struct OpenFile {
     pub socket_info: Option<SocketEntry>,
 }
 
-#[derive(Debug, Clone, Serialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub enum FdType {
     RegularFile,
     Directory,
@@ -45,7 +45,7 @@ impl std::fmt::Display for FdType {
     }
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SocketEntry {
     pub protocol: Protocol,
     pub local_addr: String,
@@ -54,7 +54,7 @@ pub struct SocketEntry {
     pub process: Arc<ProcessInfo>,
 }
 
-#[derive(Debug, Clone, Serialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub enum Protocol {
     Tcp,
     Udp,
@@ -65,6 +65,83 @@ impl std::fmt::Display for Protocol {
         match self {
             Protocol::Tcp => write!(f, "TCP"),
             Protocol::Udp => write!(f, "UDP"),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct InterfaceStats {
+    pub name: String,
+    pub rx_bytes: u64,
+    pub tx_bytes: u64,
+    pub rx_packets: u64,
+    pub tx_packets: u64,
+    pub rx_errors: u64,
+    pub tx_errors: u64,
+    pub rx_drop: u64,
+    pub tx_drop: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TcpMetrics {
+    pub retrans: u64,
+    pub syn_cookies_sent: u64,
+    pub active_opens: u64,
+    pub passive_opens: u64,
+    pub attempt_fails: u64,
+    pub estab_resets: u64,
+    pub curr_estab: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ProcessAncestor {
+    pub pid: u32,
+    pub name: String,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub enum KillSignal {
+    Term,
+    Kill,
+    Hup,
+    Int,
+}
+
+impl KillSignal {
+    pub fn as_libc(&self) -> libc::c_int {
+        match self {
+            KillSignal::Term => libc::SIGTERM,
+            KillSignal::Kill => libc::SIGKILL,
+            KillSignal::Hup => libc::SIGHUP,
+            KillSignal::Int => libc::SIGINT,
+        }
+    }
+}
+
+impl std::fmt::Display for KillSignal {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            KillSignal::Term => write!(f, "TERM"),
+            KillSignal::Kill => write!(f, "KILL"),
+            KillSignal::Hup => write!(f, "HUP"),
+            KillSignal::Int => write!(f, "INT"),
+        }
+    }
+}
+
+impl std::str::FromStr for KillSignal {
+    type Err = anyhow::Error;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s.to_ascii_uppercase().as_str() {
+            "TERM" | "SIGTERM" => Ok(KillSignal::Term),
+            "KILL" | "SIGKILL" => Ok(KillSignal::Kill),
+            "HUP" | "SIGHUP" => Ok(KillSignal::Hup),
+            "INT" | "SIGINT" => Ok(KillSignal::Int),
+            other => Err(anyhow::anyhow!(
+                "Unknown signal '{}'. Use TERM, KILL, HUP, or INT.",
+                other
+            )),
         }
     }
 }
@@ -80,6 +157,40 @@ pub struct QueryFilter {
     pub ipv4: bool,
     pub ipv6: bool,
     pub all: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ProcessResources {
+    pub pid: u32,
+    pub cpu_pct: f64,
+    pub mem_rss_kb: u64,
+    pub mem_vms_kb: u64,
+    pub open_fds: u32,
+    pub threads: u32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RouteEntry {
+    pub destination: String,
+    pub gateway: String,
+    pub interface: String,
+    pub flags: String,
+    pub metric: u32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct InterfaceAddr {
+    pub name: String,
+    pub addrs: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct NetConfig {
+    pub routes: Vec<RouteEntry>,
+    pub dns_servers: Vec<String>,
+    pub dns_search: Vec<String>,
+    pub hostname: String,
+    pub interfaces: Vec<InterfaceAddr>,
 }
 
 #[cfg(test)]

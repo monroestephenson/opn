@@ -6,7 +6,21 @@ use crate::model::QueryFilter;
 #[command(
     name = "opn",
     version,
-    about = "Find which processes have files, ports, and sockets open"
+    about = "Inspect network state: sockets, ports, processes, bandwidth, and firewall",
+    after_help = "Examples:
+  opn sockets                      List your open sockets
+  opn port 8080                    Who is listening on port 8080?
+  opn diagnose                     Full snapshot: sockets + interfaces + anomaly hints
+  opn watch                        Live-updating socket view (press q to quit)
+  opn resources                    CPU/memory for processes with open sockets
+  opn bandwidth                    Measure current bandwidth per interface
+  opn logs --log-type auth         Show recent auth log activity
+  opn netconfig                    Routes, DNS servers, and interface addresses
+  opn capture                      Capture and summarize packets (needs root/sudo)
+  opn --allow-write firewall list  List managed firewall rules
+  opn --allow-write kill-port 8080 Kill all processes listening on port 8080
+
+Tip: use --json for machine-readable output, or --llm for LLM-optimized JSON."
 )]
 pub struct Cli {
     #[command(subcommand)]
@@ -15,6 +29,14 @@ pub struct Cli {
     /// Output results as JSON instead of a table.
     #[arg(long, global = true)]
     pub json: bool,
+
+    /// Output in LLM-optimized compact JSON with self-describing actions.
+    #[arg(long = "llm", global = true)]
+    pub llm: bool,
+
+    /// Enable write operations: kill, firewall. Handle with care.
+    #[arg(long, global = true)]
+    pub allow_write: bool,
 }
 
 #[derive(Subcommand, Debug)]
@@ -83,6 +105,137 @@ pub enum Command {
         #[command(flatten)]
         filter: FilterArgs,
     },
+
+    /// Kill a process by PID.
+    Kill {
+        /// PID to terminate.
+        pid: u32,
+        /// Signal to send (TERM, KILL, HUP, INT).
+        #[arg(long, default_value = "TERM")]
+        signal: String,
+    },
+
+    /// Kill all processes listening on a port.
+    KillPort {
+        /// Port number.
+        port: u16,
+        /// Signal to send.
+        #[arg(long, default_value = "TERM")]
+        signal: String,
+        #[command(flatten)]
+        filter: FilterArgs,
+    },
+
+    /// Take a point-in-time snapshot of network state.
+    Snapshot {
+        /// Write snapshot JSON to this file (default: stdout).
+        #[arg(long)]
+        out: Option<std::path::PathBuf>,
+        #[command(flatten)]
+        filter: FilterArgs,
+    },
+
+    /// Show what changed since a previous snapshot.
+    Diff {
+        /// Path to snapshot file created with `opn snapshot`.
+        snapshot: std::path::PathBuf,
+        #[command(flatten)]
+        filter: FilterArgs,
+    },
+
+    /// Show network interface statistics.
+    Interfaces,
+
+    /// Show TCP/IP stack health metrics (Linux only).
+    Snmp,
+
+    /// Full network diagnostic: sockets + interfaces + metrics + anomalies in one call.
+    Diagnose {
+        #[command(flatten)]
+        filter: FilterArgs,
+    },
+
+    /// Manage firewall rules (requires --allow-write).
+    Firewall {
+        #[command(subcommand)]
+        action: FirewallAction,
+    },
+
+    /// Show CPU/memory/fd stats for processes with open sockets.
+    Resources {
+        #[command(flatten)]
+        filter: FilterArgs,
+    },
+
+    /// Show network configuration: routes, DNS, interface addresses.
+    Netconfig,
+
+    /// Analyze network-related log entries.
+    Logs {
+        /// Log type: auth, system, kernel, web, firewall, all.
+        #[arg(long, default_value = "all")]
+        log_type: String,
+        /// Number of lines to read from log (1–10000).
+        #[arg(long, default_value_t = 200, value_parser = parse_lines)]
+        lines: usize,
+        /// Filter string (grep-style substring match).
+        #[arg(long)]
+        filter: Option<String>,
+    },
+
+    /// Measure network bandwidth by polling interface stats.
+    Bandwidth {
+        /// Measurement duration in seconds (1-30).
+        #[arg(long, default_value_t = 1, value_parser = clap::value_parser!(u64).range(1..=30))]
+        duration: u64,
+    },
+
+    /// Capture and summarize network packets (wraps tcpdump).
+    Capture {
+        /// Network interface (default: auto).
+        #[arg(long)]
+        interface: Option<String>,
+        /// Filter by port.
+        #[arg(long)]
+        port: Option<u16>,
+        /// Filter by host IP.
+        #[arg(long)]
+        host: Option<String>,
+        /// Max packets to capture.
+        #[arg(long, default_value_t = 100)]
+        count: u32,
+        /// Stop after this many seconds.
+        #[arg(long, default_value_t = 5, value_parser = clap::value_parser!(u64).range(1..=60))]
+        duration: u64,
+    },
+}
+
+#[derive(Subcommand, Debug)]
+pub enum FirewallAction {
+    /// List current opn firewall rules.
+    List,
+    /// Block an IP address.
+    BlockIp {
+        ip: String,
+        #[arg(long)]
+        comment: Option<String>,
+        /// Rule TTL in seconds (informational only, not auto-expired).
+        #[arg(long)]
+        ttl: Option<u64>,
+    },
+    /// Block a port.
+    BlockPort {
+        port: u16,
+        /// Direction: in or out.
+        #[arg(long, default_value = "in")]
+        dir: String,
+    },
+    /// Remove a rule by IP or comment.
+    Unblock { target: String },
+    /// Flush all opn firewall rules.
+    Flush,
+    /// Undo the last firewall action.
+    Undo,
 }
 
 #[derive(Debug, Clone, Copy, ValueEnum, PartialEq, Eq)]
@@ -111,6 +264,17 @@ pub enum WatchTheme {
     TokyoNight,
     Vantablack,
     White,
+}
+
+fn parse_lines(raw: &str) -> Result<usize, String> {
+    let value: usize = raw
+        .parse()
+        .map_err(|_| String::from("lines must be a positive integer"))?;
+    if (1..=10_000).contains(&value) {
+        Ok(value)
+    } else {
+        Err(String::from("lines must be in range 1..=10000"))
+    }
 }
 
 #[derive(Parser, Debug, Clone)]

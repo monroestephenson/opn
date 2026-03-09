@@ -9,7 +9,11 @@ use crate::render::RenderOutcome;
 pub fn run(platform: &dyn Platform, filter: &QueryFilter, json: bool) -> Result<RenderOutcome> {
     let mut entries = platform.list_sockets(filter)?;
     sort_sockets(&mut entries);
-    Ok(render::render(&entries, json))
+    let outcome = render::render(&entries, json);
+    if !json && matches!(outcome, crate::render::RenderOutcome::HasResults) {
+        eprintln!("\nTip: run 'opn diagnose' for a full network snapshot with anomaly detection.");
+    }
+    Ok(outcome)
 }
 
 #[cfg(test)]

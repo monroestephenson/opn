@@ -21,6 +21,37 @@ cargo install cargo-fuzz
 cargo fuzz run proc_net
 ```
 
+## Testing
+
+Run the full local test suite:
+
+```bash
+cargo test --all-targets --all-features
+```
+
+Generate coverage locally:
+
+```bash
+cargo install cargo-llvm-cov
+cargo llvm-cov --workspace --all-features --summary-only
+```
+
+Privileged firewall integration tests are opt-in only:
+
+```bash
+sudo OPN_RUN_PRIVILEGED_TESTS=1 cargo test --test firewall_privileged_e2e -- --ignored
+```
+
+TTY-driven watch tests are also opt-in:
+
+```bash
+OPN_RUN_TTY_TESTS=1 cargo test --test watch_tty_manual -- --ignored
+```
+
+CI note:
+- Standard tests run on push/PR via `.github/workflows/rust.yml`
+- Privileged firewall + TTY ignored tests run automatically on push/PR via `.github/workflows/privileged-tests.yml` (Linux job), and can also be launched manually with workflow dispatch
+
 ## Usage
 
 ### Find processes on a port

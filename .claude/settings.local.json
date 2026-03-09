@@ -18,7 +18,17 @@
       "Bash(cargo bench:*)",
       "Bash(gh auth:*)",
       "Bash(mkdir:*)",
-      "Bash(gh run:*)"
+      "Bash(gh run:*)",
+      "Bash(./target/debug/opn:*)",
+      "Bash(cargo doc:*)",
+      "Bash(xargs ls -la)",
+      "Bash(git merge:*)",
+      "Bash(ps:*)",
+      "Bash(opn:*)",
+      "Bash(cargo run:*)",
+      "Bash(sudo pfctl:*)",
+      "Bash(ls:*)",
+      "Bash(xcrun --show-sdk-path)"
     ]
   }
 }

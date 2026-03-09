@@ -1,6 +1,9 @@
 use anyhow::Result;
 
-use crate::model::{OpenFile, ProcessInfo, QueryFilter, SocketEntry};
+use crate::model::{
+    InterfaceStats, KillSignal, NetConfig, OpenFile, ProcessAncestor, ProcessInfo,
+    ProcessResources, QueryFilter, SocketEntry, TcpMetrics,
+};
 
 pub trait Platform: Send + Sync {
     fn list_pids(&self, filter: &QueryFilter) -> Result<Vec<u32>>;
@@ -10,6 +13,12 @@ pub trait Platform: Send + Sync {
     fn find_by_port(&self, port: u16, filter: &QueryFilter) -> Result<Vec<SocketEntry>>;
     fn list_sockets(&self, filter: &QueryFilter) -> Result<Vec<SocketEntry>>;
     fn find_deleted(&self, filter: &QueryFilter) -> Result<Vec<OpenFile>>;
+    fn process_ancestry(&self, pid: u32) -> Result<Vec<ProcessAncestor>>;
+    fn interface_stats(&self) -> Result<Vec<InterfaceStats>>;
+    fn tcp_metrics(&self) -> Result<Option<TcpMetrics>>;
+    fn kill_process(&self, pid: u32, signal: KillSignal) -> Result<()>;
+    fn process_resources(&self, pid: u32) -> Result<ProcessResources>;
+    fn net_config(&self) -> Result<NetConfig>;
 }
 
 #[cfg(target_os = "macos")]

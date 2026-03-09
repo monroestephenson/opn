@@ -1,5 +1,6 @@
 use anyhow::{Context, Result};
 use rayon::prelude::*;
+use std::collections::HashSet;
 use std::path::Path;
 use std::sync::Arc;
 
@@ -269,6 +270,251 @@ impl MacOsPlatform {
     }
 }
 
+// ── getifaddrs-based interface address listing ──
+
+fn macos_net_config_interfaces() -> Vec<crate::model::InterfaceAddr> {
+    use std::collections::BTreeMap;
+    let mut iface_map: BTreeMap<String, Vec<String>> = BTreeMap::new();
+
+    unsafe {
+        let mut ifap: *mut libc::ifaddrs = std::ptr::null_mut();
+        if libc::getifaddrs(&mut ifap) != 0 {
+            return vec![];
+        }
+
+        let mut ifa = ifap;
+        while !ifa.is_null() {
+            let ifa_ref = &*ifa;
+            ifa = ifa_ref.ifa_next;
+
+            if ifa_ref.ifa_name.is_null() || ifa_ref.ifa_addr.is_null() {
+                continue;
+            }
+            let name = std::ffi::CStr::from_ptr(ifa_ref.ifa_name)
+                .to_string_lossy()
+                .into_owned();
+            iface_map.entry(name.clone()).or_default();
+
+            let sa_family = (*ifa_ref.ifa_addr).sa_family as libc::c_int;
+            if sa_family == libc::AF_INET {
+                let sin = &*(ifa_ref.ifa_addr as *const libc::sockaddr_in);
+                let ip = std::net::Ipv4Addr::from(u32::from_be(sin.sin_addr.s_addr));
+                // Compute prefix from netmask
+                let prefix = if !ifa_ref.ifa_netmask.is_null() {
+                    let mask_sin = &*(ifa_ref.ifa_netmask as *const libc::sockaddr_in);
+                    u32::from_be(mask_sin.sin_addr.s_addr).count_ones()
+                } else {
+                    32
+                };
+                iface_map
+                    .entry(name)
+                    .or_default()
+                    .push(format!("{}/{}", ip, prefix));
+            } else if sa_family == libc::AF_INET6 {
+                let sin6 = &*(ifa_ref.ifa_addr as *const libc::sockaddr_in6);
+                let bytes = sin6.sin6_addr.s6_addr;
+                let ip = std::net::Ipv6Addr::from(bytes);
+                let prefix = if !ifa_ref.ifa_netmask.is_null() {
+                    let mask_sin6 = &*(ifa_ref.ifa_netmask as *const libc::sockaddr_in6);
+                    mask_sin6
+                        .sin6_addr
+                        .s6_addr
+                        .iter()
+                        .map(|b| b.count_ones())
+                        .sum::<u32>()
+                } else {
+                    128
+                };
+                iface_map
+                    .entry(name)
+                    .or_default()
+                    .push(format!("{}/{}", ip, prefix));
+            }
+        }
+
+        libc::freeifaddrs(ifap);
+    }
+
+    iface_map
+        .into_iter()
+        .map(|(name, addrs)| crate::model::InterfaceAddr { name, addrs })
+        .collect()
+}
+
+// ── sysctl(NET_RT_DUMP)-based routing table ──
+
+fn macos_net_config_routes() -> Vec<crate::model::RouteEntry> {
+    // Round address length up to 4-byte boundary (BSD ROUNDUP macro)
+    fn roundup(len: usize) -> usize {
+        if len == 0 {
+            4
+        } else {
+            (len + 3) & !3
+        }
+    }
+
+    // Format a sockaddr as an IP string (AF_INET only for now)
+    fn sa_to_str(ptr: *const u8) -> Option<String> {
+        if ptr.is_null() {
+            return None;
+        }
+        unsafe {
+            let sa_len = *ptr as usize;
+            let sa_family = *ptr.add(1) as libc::c_int;
+            if sa_family == libc::AF_INET && sa_len >= 8 {
+                let sa = &*(ptr as *const libc::sockaddr_in);
+                let ip = std::net::Ipv4Addr::from(u32::from_be(sa.sin_addr.s_addr));
+                Some(ip.to_string())
+            } else {
+                None
+            }
+        }
+    }
+
+    let mut routes = Vec::new();
+
+    unsafe {
+        let mib: [libc::c_int; 6] = [
+            libc::CTL_NET,
+            libc::PF_ROUTE,
+            0,
+            libc::AF_INET as libc::c_int,
+            libc::NET_RT_DUMP,
+            0,
+        ];
+        let mut needed: libc::size_t = 0;
+        if libc::sysctl(
+            mib.as_ptr() as *mut _,
+            6,
+            std::ptr::null_mut(),
+            &mut needed,
+            std::ptr::null_mut(),
+            0,
+        ) != 0
+            || needed == 0
+        {
+            return routes;
+        }
+
+        let mut buf = vec![0u8; needed];
+        if libc::sysctl(
+            mib.as_ptr() as *mut _,
+            6,
+            buf.as_mut_ptr() as *mut libc::c_void,
+            &mut needed,
+            std::ptr::null_mut(),
+            0,
+        ) != 0
+        {
+            return routes;
+        }
+
+        let hdr_size = std::mem::size_of::<libc::rt_msghdr>();
+        let mut offset = 0usize;
+
+        while offset + hdr_size <= needed {
+            let hdr = &*(buf.as_ptr().add(offset) as *const libc::rt_msghdr);
+            let msg_len = hdr.rtm_msglen as usize;
+            if msg_len < hdr_size || offset + msg_len > needed {
+                break;
+            }
+
+            // Only care about RTM_GET routes that are UP
+            let rtm_up = libc::RTF_UP;
+            if (hdr.rtm_flags & rtm_up) != 0 {
+                let addrs_bits = hdr.rtm_addrs;
+                let flags = hdr.rtm_flags;
+
+                // Walk sockaddrs after the header
+                let mut sa_ptr = buf.as_ptr().add(offset + hdr_size);
+                let end_ptr = buf.as_ptr().add(offset + msg_len);
+
+                // Resolve interface name from rtm_index (simpler than parsing RTA_IFP)
+                let interface = {
+                    let mut name_buf = [0u8; libc::IF_NAMESIZE];
+                    let ret = libc::if_indextoname(
+                        hdr.rtm_index as libc::c_uint,
+                        name_buf.as_mut_ptr() as *mut libc::c_char,
+                    );
+                    if ret.is_null() {
+                        String::new()
+                    } else {
+                        let nul = name_buf
+                            .iter()
+                            .position(|b| *b == 0)
+                            .unwrap_or(name_buf.len());
+                        String::from_utf8_lossy(&name_buf[..nul]).into_owned()
+                    }
+                };
+
+                let mut dst_str: Option<String> = None;
+                let mut gw_str: Option<String> = None;
+                let mut mask_bits: u32 = 32;
+
+                for bit in 0..8 {
+                    if sa_ptr >= end_ptr {
+                        break;
+                    }
+                    if (addrs_bits & (1 << bit)) == 0 {
+                        continue;
+                    }
+                    let sa_len = (*sa_ptr) as usize;
+                    let advance = roundup(if sa_len == 0 { 4 } else { sa_len });
+
+                    match bit {
+                        0 => dst_str = sa_to_str(sa_ptr), // RTA_DST
+                        1 => gw_str = sa_to_str(sa_ptr),  // RTA_GATEWAY
+                        2 => {
+                            // RTA_NETMASK — compute prefix length
+                            if sa_len >= 8 {
+                                let sa = &*(sa_ptr as *const libc::sockaddr_in);
+                                mask_bits = u32::from_be(sa.sin_addr.s_addr).count_ones();
+                            } else if sa_len == 0 {
+                                mask_bits = 0; // default route
+                            }
+                        }
+                        _ => {}
+                    }
+
+                    sa_ptr = sa_ptr.add(advance);
+                }
+
+                if let Some(dst) = dst_str {
+                    let destination = if (flags & libc::RTF_HOST) != 0 {
+                        format!("{}/32", dst)
+                    } else if dst == "0.0.0.0" {
+                        String::from("default")
+                    } else {
+                        format!("{}/{}", dst, mask_bits)
+                    };
+                    let gateway = gw_str.unwrap_or_else(|| String::from("*"));
+                    let mut flag_str = String::new();
+                    if (flags & libc::RTF_UP) != 0 {
+                        flag_str.push('U');
+                    }
+                    if (flags & libc::RTF_GATEWAY) != 0 {
+                        flag_str.push('G');
+                    }
+                    if (flags & libc::RTF_HOST) != 0 {
+                        flag_str.push('H');
+                    }
+                    routes.push(crate::model::RouteEntry {
+                        destination,
+                        gateway,
+                        flags: flag_str,
+                        interface,
+                        metric: 0,
+                    });
+                }
+            }
+
+            offset += msg_len;
+        }
+    }
+
+    routes
+}
+
 impl Platform for MacOsPlatform {
     fn list_pids(&self, filter: &QueryFilter) -> Result<Vec<u32>> {
         use libproc::proc_pid;
@@ -500,5 +746,199 @@ impl Platform for MacOsPlatform {
             .collect();
 
         Ok(results)
+    }
+
+    fn kill_process(&self, pid: u32, signal: KillSignal) -> Result<()> {
+        let ret = unsafe { libc::kill(pid as i32, signal.as_libc()) };
+        if ret != 0 {
+            let err = std::io::Error::last_os_error();
+            anyhow::bail!("Failed to send SIG{} to pid {}: {}", signal, pid, err);
+        }
+        Ok(())
+    }
+
+    fn process_ancestry(&self, pid: u32) -> Result<Vec<ProcessAncestor>> {
+        use libproc::bsd_info::BSDInfo;
+        use libproc::proc_pid;
+
+        let mut ancestors = Vec::new();
+        let mut current_pid = pid;
+        for _ in 0..16 {
+            let info = match proc_pid::pidinfo::<BSDInfo>(current_pid as i32, 0) {
+                Ok(i) => i,
+                Err(_) => break,
+            };
+            let ppid = info.pbi_ppid;
+            if ppid == 0 || ppid == current_pid {
+                break;
+            }
+            let name = proc_pid::name(ppid as i32).unwrap_or_else(|_| String::from("<unknown>"));
+            ancestors.push(ProcessAncestor { pid: ppid, name });
+            current_pid = ppid;
+        }
+        ancestors.reverse();
+        Ok(ancestors)
+    }
+
+    fn interface_stats(&self) -> Result<Vec<InterfaceStats>> {
+        let mut results = Vec::new();
+        let mut seen = HashSet::new();
+
+        unsafe {
+            let mut ifap: *mut libc::ifaddrs = std::ptr::null_mut();
+            if libc::getifaddrs(&mut ifap) != 0 {
+                return Err(anyhow::anyhow!(
+                    "getifaddrs failed: {}",
+                    std::io::Error::last_os_error()
+                ));
+            }
+
+            let mut ifa = ifap;
+            while !ifa.is_null() {
+                let ifa_ref = &*ifa;
+                ifa = ifa_ref.ifa_next;
+
+                let name = if ifa_ref.ifa_name.is_null() {
+                    continue;
+                } else {
+                    std::ffi::CStr::from_ptr(ifa_ref.ifa_name)
+                        .to_string_lossy()
+                        .into_owned()
+                };
+
+                // Only process AF_LINK entries (link-level stats) once per interface
+                if ifa_ref.ifa_addr.is_null() {
+                    continue;
+                }
+                let sa_family = (*ifa_ref.ifa_addr).sa_family as libc::c_int;
+                if sa_family != libc::AF_LINK {
+                    continue;
+                }
+                if seen.contains(&name) {
+                    continue;
+                }
+                seen.insert(name.clone());
+
+                // ifa_data points to struct if_data for AF_LINK entries
+                if ifa_ref.ifa_data.is_null() {
+                    results.push(InterfaceStats {
+                        name,
+                        rx_bytes: 0,
+                        tx_bytes: 0,
+                        rx_packets: 0,
+                        tx_packets: 0,
+                        rx_errors: 0,
+                        tx_errors: 0,
+                        rx_drop: 0,
+                        tx_drop: 0,
+                    });
+                    continue;
+                }
+
+                let d = &*(ifa_ref.ifa_data as *const libc::if_data);
+                results.push(InterfaceStats {
+                    name,
+                    rx_bytes: d.ifi_ibytes as u64,
+                    tx_bytes: d.ifi_obytes as u64,
+                    rx_packets: d.ifi_ipackets as u64,
+                    tx_packets: d.ifi_opackets as u64,
+                    rx_errors: d.ifi_ierrors as u64,
+                    tx_errors: d.ifi_oerrors as u64,
+                    rx_drop: d.ifi_iqdrops as u64,
+                    tx_drop: 0,
+                });
+            }
+
+            libc::freeifaddrs(ifap);
+        }
+
+        Ok(results)
+    }
+
+    fn tcp_metrics(&self) -> Result<Option<TcpMetrics>> {
+        Ok(None)
+    }
+
+    fn process_resources(&self, pid: u32) -> Result<ProcessResources> {
+        use libproc::file_info::ListFDs;
+        use libproc::proc_pid;
+        use libproc::task_info::TaskAllInfo;
+
+        let t1 = proc_pid::pidinfo::<TaskAllInfo>(pid as i32, 0)
+            .map_err(|e| anyhow::anyhow!("pidinfo failed for pid {}: {}", pid, e))?;
+        let t1_ns = t1.ptinfo.pti_total_user + t1.ptinfo.pti_total_system;
+
+        std::thread::sleep(std::time::Duration::from_millis(100));
+
+        let t2 = proc_pid::pidinfo::<TaskAllInfo>(pid as i32, 0).unwrap_or(t1);
+        let t2_ns = t2.ptinfo.pti_total_user + t2.ptinfo.pti_total_system;
+
+        // delta_ns over 100ms window → percent
+        let cpu_pct = t2_ns.saturating_sub(t1_ns) as f64 / 1_000_000.0;
+        let mem_rss_kb = t2.ptinfo.pti_resident_size / 1024;
+        let mem_vms_kb = t2.ptinfo.pti_virtual_size / 1024;
+        let threads = t2.ptinfo.pti_threadnum.max(0) as u32;
+
+        let open_fds = proc_pid::listpidinfo::<ListFDs>(pid as i32, 1024)
+            .map(|v| v.len() as u32)
+            .unwrap_or(0);
+
+        Ok(ProcessResources {
+            pid,
+            cpu_pct,
+            mem_rss_kb,
+            mem_vms_kb,
+            open_fds,
+            threads,
+        })
+    }
+
+    fn net_config(&self) -> Result<NetConfig> {
+        // Hostname via gethostname(2)
+        let hostname = {
+            let mut buf = vec![0u8; 256];
+            let ret =
+                unsafe { libc::gethostname(buf.as_mut_ptr() as *mut libc::c_char, buf.len()) };
+            if ret == 0 {
+                let nul = buf.iter().position(|b| *b == 0).unwrap_or(buf.len());
+                String::from_utf8_lossy(&buf[..nul]).into_owned()
+            } else {
+                String::new()
+            }
+        };
+
+        // DNS: /etc/resolv.conf
+        let (dns_servers, dns_search) = {
+            let content = std::fs::read_to_string("/etc/resolv.conf").unwrap_or_default();
+            let mut servers = Vec::new();
+            let mut search = Vec::new();
+            for line in content.lines() {
+                let line = line.trim();
+                if let Some(rest) = line.strip_prefix("nameserver") {
+                    if let Some(s) = rest.split_whitespace().next() {
+                        servers.push(s.to_string());
+                    }
+                } else if let Some(rest) = line.strip_prefix("search") {
+                    for s in rest.split_whitespace() {
+                        search.push(s.to_string());
+                    }
+                }
+            }
+            (servers, search)
+        };
+
+        // Interface addresses via getifaddrs(3)
+        let interfaces = macos_net_config_interfaces();
+
+        // Routes via sysctl(NET_RT_DUMP)
+        let routes = macos_net_config_routes();
+
+        Ok(crate::model::NetConfig {
+            routes,
+            dns_servers,
+            dns_search,
+            hostname,
+            interfaces,
+        })
     }
 }
