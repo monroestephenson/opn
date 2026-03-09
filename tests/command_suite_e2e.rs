@@ -1,4 +1,6 @@
 use std::process::{Command, Output};
+use std::thread;
+use std::time::Duration;
 
 use serde_json::Value;
 
@@ -214,4 +216,57 @@ fn test_firewall_invalid_ip_json_error_shape() {
         val["error"]["code"].is_string(),
         "expected error.code string in --json mode: {val}"
     );
+}
+
+#[test]
+fn test_stress_read_commands_repeat() {
+    let command_sets: [&[&str]; 4] = [
+        &["interfaces"],
+        &["resources"],
+        &["netconfig"],
+        &["bandwidth", "--duration", "1"],
+    ];
+
+    for _ in 0..3 {
+        for args in command_sets {
+            let output = opn_cmd()
+                .args(args)
+                .output()
+                .unwrap_or_else(|e| panic!("failed to run {:?}: {e}", args));
+            assert_non_error_exit(&output);
+            let stderr = String::from_utf8_lossy(&output.stderr).to_ascii_lowercase();
+            assert!(
+                !stderr.contains("panic"),
+                "unexpected panic-like stderr for {:?}: {}",
+                args,
+                stderr
+            );
+        }
+    }
+}
+
+#[cfg(feature = "watch")]
+#[test]
+fn test_watch_smoke_can_start_and_be_interrupted() {
+    let mut child = opn_cmd()
+        .args(["watch", "--interval", "1"])
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .expect("failed to spawn watch");
+
+    thread::sleep(Duration::from_millis(1200));
+
+    // If still running, terminate cleanly from the test harness.
+    if child.try_wait().expect("failed to poll watch").is_none() {
+        child.kill().expect("failed to kill watch process");
+        let _ = child.wait();
+    } else {
+        let out = child.wait_with_output().expect("failed to collect output");
+        let stderr = String::from_utf8_lossy(&out.stderr).to_ascii_lowercase();
+        assert!(
+            !stderr.contains("panic"),
+            "watch exited early with panic-like stderr: {stderr}"
+        );
+    }
 }

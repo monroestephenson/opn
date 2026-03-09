@@ -1,0 +1,25 @@
+name: Privileged Tests
+
+on:
+  workflow_dispatch:
+
+jobs:
+  privileged-linux:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Linux build deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libpcap-dev util-linux iptables
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Run privileged firewall tests (ignored set)
+        run: sudo OPN_RUN_PRIVILEGED_TESTS=1 cargo test --test firewall_privileged_e2e -- --ignored
+
+      - name: Run TTY watch manual tests (ignored set)
+        run: OPN_RUN_TTY_TESTS=1 cargo test --test watch_tty_manual -- --ignored

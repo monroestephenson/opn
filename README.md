@@ -42,6 +42,12 @@ Privileged firewall integration tests are opt-in only:
 sudo OPN_RUN_PRIVILEGED_TESTS=1 cargo test --test firewall_privileged_e2e -- --ignored
 ```
 
+TTY-driven watch tests are also opt-in:
+
+```bash
+OPN_RUN_TTY_TESTS=1 cargo test --test watch_tty_manual -- --ignored
+```
+
 ## Usage
 
 ### Find processes on a port
