@@ -176,3 +176,42 @@ fn test_firewall_invalid_ip_llm_has_error_envelope() {
         "expected warnings array on firewall error: {val}"
     );
 }
+
+#[test]
+fn test_kill_port_llm_write_guard_envelope() {
+    let output = opn_cmd()
+        .args(["--llm", "kill-port", "1"])
+        .output()
+        .expect("failed to run --llm kill-port 1");
+    assert_eq!(output.status.code(), Some(2));
+    let val = parse_llm_stdout(&output);
+    assert_eq!(val["ok"], false);
+    assert!(
+        val["data"]["error"].is_object(),
+        "expected structured data.error payload: {val}"
+    );
+}
+
+#[test]
+fn test_firewall_invalid_ip_json_error_shape() {
+    let output = opn_cmd()
+        .args([
+            "--json",
+            "--allow-write",
+            "firewall",
+            "block-ip",
+            "not-an-ip",
+        ])
+        .output()
+        .expect("failed to run --json --allow-write firewall block-ip");
+    assert_eq!(output.status.code(), Some(2));
+    let val = parse_json_stdout(&output);
+    assert!(
+        val["error"].is_object(),
+        "expected top-level error object in --json mode: {val}"
+    );
+    assert!(
+        val["error"]["code"].is_string(),
+        "expected error.code string in --json mode: {val}"
+    );
+}

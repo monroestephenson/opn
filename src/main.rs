@@ -437,3 +437,139 @@ fn main() -> ExitCode {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::cli::{FilterArgs, FirewallAction, WatchTarget, WatchTheme};
+
+    fn empty_filter() -> FilterArgs {
+        FilterArgs {
+            all: false,
+            user: None,
+            process: None,
+            state: None,
+            filter_pid: None,
+            tcp: false,
+            udp: false,
+            ipv4: false,
+            ipv6: false,
+        }
+    }
+
+    #[test]
+    fn classify_error_not_found() {
+        let err = classify_error("PID 999 not found");
+        assert_eq!(err.code, "NOT_FOUND");
+        assert!(matches!(err.category, ErrorCategory::NotFound));
+    }
+
+    #[test]
+    fn classify_error_permission_denied() {
+        let err = classify_error("Operation not permitted");
+        assert_eq!(err.code, "PERMISSION_DENIED");
+        assert!(matches!(err.category, ErrorCategory::PermissionDenied));
+    }
+
+    #[test]
+    fn classify_error_not_implemented() {
+        let err = classify_error("requires the 'watch' feature");
+        assert_eq!(err.code, "NOT_IMPLEMENTED");
+        assert!(matches!(err.category, ErrorCategory::NotImplemented));
+    }
+
+    #[test]
+    fn classify_error_invalid_input() {
+        let err = classify_error("invalid port");
+        assert_eq!(err.code, "INVALID_INPUT");
+        assert!(matches!(err.category, ErrorCategory::InvalidInput));
+    }
+
+    #[test]
+    fn classify_error_runtime_fallback() {
+        let err = classify_error("unexpected failure");
+        assert_eq!(err.code, "RUNTIME_ERROR");
+        assert!(matches!(err.category, ErrorCategory::Runtime));
+    }
+
+    #[test]
+    fn command_label_covers_all_commands() {
+        let filter = empty_filter();
+        let labels = [
+            command_label(&Command::Port {
+                port: 80,
+                filter: filter.clone(),
+            }),
+            command_label(&Command::File {
+                path: "/tmp/x".to_string(),
+                filter: filter.clone(),
+            }),
+            command_label(&Command::Pid {
+                pid: 1,
+                filter: filter.clone(),
+            }),
+            command_label(&Command::Deleted {
+                filter: filter.clone(),
+            }),
+            command_label(&Command::Sockets {
+                filter: filter.clone(),
+            }),
+            command_label(&Command::Watch {
+                target: WatchTarget::Sockets,
+                theme: WatchTheme::Everforest,
+                port: None,
+                file: None,
+                interval: 2,
+                filter: filter.clone(),
+            }),
+            command_label(&Command::Kill {
+                pid: 123,
+                signal: "TERM".to_string(),
+            }),
+            command_label(&Command::KillPort {
+                port: 443,
+                signal: "TERM".to_string(),
+                filter: filter.clone(),
+            }),
+            command_label(&Command::Snapshot {
+                out: None,
+                filter: filter.clone(),
+            }),
+            command_label(&Command::Diff {
+                snapshot: std::path::PathBuf::from("/tmp/s.json"),
+                filter: filter.clone(),
+            }),
+            command_label(&Command::Interfaces),
+            command_label(&Command::Snmp),
+            command_label(&Command::Diagnose {
+                filter: filter.clone(),
+            }),
+            command_label(&Command::Firewall {
+                action: FirewallAction::List,
+            }),
+            command_label(&Command::Resources {
+                filter: filter.clone(),
+            }),
+            command_label(&Command::Netconfig),
+            command_label(&Command::Logs {
+                log_type: "all".to_string(),
+                lines: 50,
+                filter: None,
+            }),
+            command_label(&Command::Bandwidth { duration: 1 }),
+            command_label(&Command::Capture {
+                interface: None,
+                port: None,
+                host: None,
+                count: 1,
+                duration: 1,
+            }),
+        ];
+
+        assert!(labels.contains(&"firewall".to_string()));
+        assert!(labels.contains(&"interfaces".to_string()));
+        assert!(labels.contains(&"capture".to_string()));
+        assert!(labels.contains(&"kill 123".to_string()));
+        assert!(labels.contains(&"port 80".to_string()));
+    }
+}

@@ -21,6 +21,27 @@ cargo install cargo-fuzz
 cargo fuzz run proc_net
 ```
 
+## Testing
+
+Run the full local test suite:
+
+```bash
+cargo test --all-targets --all-features
+```
+
+Generate coverage locally:
+
+```bash
+cargo install cargo-llvm-cov
+cargo llvm-cov --workspace --all-features --summary-only
+```
+
+Privileged firewall integration tests are opt-in only:
+
+```bash
+sudo OPN_RUN_PRIVILEGED_TESTS=1 cargo test --test firewall_privileged_e2e -- --ignored
+```
+
 ## Usage
 
 ### Find processes on a port
