@@ -48,6 +48,10 @@ TTY-driven watch tests are also opt-in:
 OPN_RUN_TTY_TESTS=1 cargo test --test watch_tty_manual -- --ignored
 ```
 
+CI note:
+- Standard tests run on push/PR via `.github/workflows/rust.yml`
+- Privileged firewall + TTY ignored tests run automatically on push/PR via `.github/workflows/privileged-tests.yml` (Linux job), and can also be launched manually with workflow dispatch
+
 ## Usage
 
 ### Find processes on a port

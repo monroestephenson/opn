@@ -1,6 +1,22 @@
 name: Privileged Tests
 
 on:
+  push:
+    branches: ["main"]
+    paths:
+      - "src/**"
+      - "tests/**"
+      - ".github/workflows/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
+  pull_request:
+    branches: ["main"]
+    paths:
+      - "src/**"
+      - "tests/**"
+      - ".github/workflows/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
   workflow_dispatch:
 
 jobs:
