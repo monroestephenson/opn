@@ -35,6 +35,9 @@ pub fn run(
     allow_write: bool,
 ) -> Result<RenderOutcome> {
     let t1 = platform.interface_stats()?;
+    if !llm {
+        eprintln!("Measuring for {duration_secs}s...");
+    }
     std::thread::sleep(std::time::Duration::from_secs(duration_secs));
     let t2 = platform.interface_stats()?;
 

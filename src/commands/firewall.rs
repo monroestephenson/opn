@@ -237,18 +237,61 @@ mod macos_fw {
         Ok(())
     }
 
+    /// Check that the 'opn' anchor is declared in /etc/pf.conf.
+    /// Returns a helpful error if not, since pfctl will refuse to load rules otherwise.
+    fn check_anchor_setup() -> Result<()> {
+        let pf_conf = std::fs::read_to_string("/etc/pf.conf").unwrap_or_default();
+        let has_anchor = pf_conf
+            .lines()
+            .any(|l| !l.trim_start().starts_with('#') && l.contains("anchor") && l.contains("opn"));
+        if !has_anchor {
+            anyhow::bail!(
+                "The 'opn' pf anchor is not set up.\n\
+                 \n\
+                 Add this line to /etc/pf.conf (before the com.apple anchor lines):\n\
+                 \n\
+                 \tanchor \"opn\"\n\
+                 \n\
+                 Then reload pf:\n\
+                 \n\
+                 \tsudo pfctl -f /etc/pf.conf\n\
+                 \n\
+                 After that, firewall commands will work."
+            );
+        }
+        Ok(())
+    }
+
     pub fn list() -> Result<String> {
         let output = Command::new("pfctl")
             .args(["-a", "opn", "-s", "rules"])
             .output();
         match output {
-            Ok(out) => Ok(String::from_utf8_lossy(&out.stdout).to_string()
-                + &String::from_utf8_lossy(&out.stderr)),
+            Ok(out) => {
+                let stderr = String::from_utf8_lossy(&out.stderr);
+                // Anchor doesn't exist yet — no rules have been added
+                if stderr.contains("DIOCGETRULES") || stderr.contains("Invalid argument") {
+                    return Ok(String::from("No rules. Use 'opn --allow-write firewall block-ip <IP>' or 'block-port <PORT>' to add one."));
+                }
+                let stdout = String::from_utf8_lossy(&out.stdout).to_string();
+                // Filter out harmless ALTQ noise from stderr
+                let relevant_stderr: String = stderr
+                    .lines()
+                    .filter(|l| !l.contains("ALTQ") && !l.contains("DIOCGETRULES"))
+                    .collect::<Vec<_>>()
+                    .join("\n");
+                Ok(if relevant_stderr.is_empty() {
+                    stdout
+                } else {
+                    format!("{}{}", stdout, relevant_stderr)
+                })
+            }
             Err(e) => Err(anyhow::anyhow!("Failed to run pfctl: {}", e)),
         }
     }
 
     fn reload_rules() -> Result<()> {
+        check_anchor_setup()?;
         let rules_path = pf_rules_path();
         run_cmd(&[
             "pfctl",
@@ -275,7 +318,7 @@ mod macos_fw {
         ip.parse::<std::net::IpAddr>()
             .with_context(|| format!("Invalid IP address: {}", ip))?;
         let label = comment.unwrap_or(ip);
-        append_rule(&format!("block drop from {} to any # opn:{}", ip, label))?;
+        append_rule(&format!("block from {} to any # opn:{}", ip, label))?;
         let undo = UndoEntry {
             ts: agent::current_ts(),
             action: String::from("block-ip"),
@@ -289,7 +332,7 @@ mod macos_fw {
     pub fn block_port(port: u16, dir: &str) -> Result<String> {
         let direction = if dir == "out" { "out" } else { "in" };
         append_rule(&format!(
-            "block drop {} on any proto tcp from any to any port {}",
+            "block {} proto tcp from any to any port {}",
             direction, port
         ))?;
         let undo = UndoEntry {

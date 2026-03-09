@@ -6,7 +6,21 @@ use crate::model::QueryFilter;
 #[command(
     name = "opn",
     version,
-    about = "Find which processes have files, ports, and sockets open"
+    about = "Inspect network state: sockets, ports, processes, bandwidth, and firewall",
+    after_help = "Examples:
+  opn sockets                      List your open sockets
+  opn port 8080                    Who is listening on port 8080?
+  opn diagnose                     Full snapshot: sockets + interfaces + anomaly hints
+  opn watch                        Live-updating socket view (press q to quit)
+  opn resources                    CPU/memory for processes with open sockets
+  opn bandwidth                    Measure current bandwidth per interface
+  opn logs --log-type auth         Show recent auth log activity
+  opn netconfig                    Routes, DNS servers, and interface addresses
+  opn capture                      Capture and summarize packets (needs root/sudo)
+  opn --allow-write firewall list  List managed firewall rules
+  opn --allow-write kill-port 8080 Kill all processes listening on port 8080
+
+Tip: use --json for machine-readable output, or --llm for LLM-optimized JSON."
 )]
 pub struct Cli {
     #[command(subcommand)]

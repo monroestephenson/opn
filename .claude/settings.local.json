@@ -23,7 +23,10 @@
       "Bash(cargo doc:*)",
       "Bash(xargs ls -la)",
       "Bash(git merge:*)",
-      "Bash(ps:*)"
+      "Bash(ps:*)",
+      "Bash(opn:*)",
+      "Bash(cargo run:*)",
+      "Bash(sudo pfctl:*)"
     ]
   }
 }

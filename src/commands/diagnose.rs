@@ -75,26 +75,39 @@ pub fn run(
     } else {
         println!("=== SOCKETS ===");
         println!(
-            "  TCP listeners: {}  TCP established: {}  UDP: {}  Unique processes: {}",
+            "  TCP listen: {}  TCP established: {}  UDP: {}  Processes: {}",
             tcp_listen,
             tcp_est,
             udp_count,
             unique_pids.len()
         );
-        for s in &agent_sockets {
+        if !agent_sockets.is_empty() {
+            println!();
             println!(
-                "  {} {} {} {} pid={} proc={}",
-                s.protocol, s.local, s.remote, s.state, s.pid, s.process
+                "  {:<6} {:<26} {:<26} {:<14} {:<7} PROCESS",
+                "PROTO", "LOCAL", "REMOTE", "STATE", "PID"
             );
+            println!("  {}", "-".repeat(90));
+            for s in &agent_sockets {
+                println!(
+                    "  {:<6} {:<26} {:<26} {:<14} {:<7} {}",
+                    s.protocol, s.local, s.remote, s.state, s.pid, s.process
+                );
+            }
         }
 
         println!("\n=== INTERFACES ===");
         if interfaces.is_empty() {
             println!("  (no interfaces)");
         } else {
+            println!(
+                "  {:<16} {:>14} {:>14}",
+                "INTERFACE", "RX-BYTES", "TX-BYTES"
+            );
+            println!("  {}", "-".repeat(46));
             for iface in &interfaces {
                 println!(
-                    "  {} rx={} tx={}",
+                    "  {:<16} {:>14} {:>14}",
                     iface.name, iface.rx_bytes, iface.tx_bytes
                 );
             }
@@ -115,9 +128,11 @@ pub fn run(
             println!("  None detected.");
         } else {
             for h in &hints {
-                println!("  {}", h);
+                println!("  ! {h}");
             }
         }
+
+        println!("\nTip: run 'opn watch' for a live view, or 'opn resources' to see CPU/memory per process.");
     }
 
     if agent_sockets.is_empty() && agent_files.is_empty() {

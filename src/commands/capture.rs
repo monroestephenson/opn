@@ -227,7 +227,13 @@ pub fn run(
                 conn["bytes"].as_u64().unwrap_or(0)
             );
         }
-        println!("\nProtocol distribution: {:?}", proto_dist);
+        let mut proto_list: Vec<(&String, &u32)> = proto_dist.iter().collect();
+        proto_list.sort_by(|a, b| b.1.cmp(a.1));
+        let proto_str: Vec<String> = proto_list
+            .iter()
+            .map(|(k, v)| format!("{k}: {v}"))
+            .collect();
+        println!("\nProtocol distribution: {}", proto_str.join(", "));
         println!("Top talkers: {}", top_talkers.join(", "));
     }
 
