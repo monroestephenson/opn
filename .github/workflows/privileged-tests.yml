@@ -43,5 +43,8 @@ jobs:
             OPN_RUN_PRIVILEGED_TESTS=1 \
             cargo +stable test --test firewall_privileged_e2e -- --ignored
 
+      - name: Fix target dir ownership after sudo cargo
+        run: sudo chown -R "$(id -u):$(id -g)" target
+
       - name: Run TTY watch manual tests (ignored set)
         run: OPN_RUN_TTY_TESTS=1 cargo test --test watch_tty_manual -- --ignored
