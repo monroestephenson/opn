@@ -439,7 +439,10 @@ fn macos_net_config_routes() -> Vec<crate::model::RouteEntry> {
                     if ret.is_null() {
                         String::new()
                     } else {
-                        let nul = name_buf.iter().position(|b| *b == 0).unwrap_or(name_buf.len());
+                        let nul = name_buf
+                            .iter()
+                            .position(|b| *b == 0)
+                            .unwrap_or(name_buf.len());
                         String::from_utf8_lossy(&name_buf[..nul]).into_owned()
                     }
                 };
