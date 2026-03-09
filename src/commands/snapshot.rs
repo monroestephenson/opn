@@ -90,7 +90,59 @@ pub fn run_diff(
         };
         agent::print_agent_response(&resp);
     } else {
-        println!("{}", serde_json::to_string_pretty(&diff)?);
+        let fmt_socket = |s: &serde_json::Value| -> String {
+            format!(
+                "  {} {} → {} [{}] pid={} proc={}",
+                s["p"].as_str().unwrap_or("?"),
+                s["l"].as_str().unwrap_or("?"),
+                s["r"].as_str().unwrap_or("?"),
+                s["st"].as_str().unwrap_or("?"),
+                s["pid"].as_u64().unwrap_or(0),
+                s["proc"].as_str().unwrap_or("?"),
+            )
+        };
+
+        let empty = vec![];
+        let added = diff["added_listeners"].as_array().unwrap_or(&empty);
+        let removed = diff["removed_listeners"].as_array().unwrap_or(&empty);
+        let new_conns = diff["new_connections"].as_array().unwrap_or(&empty);
+        let dropped = diff["dropped_connections"].as_array().unwrap_or(&empty);
+        let anomalies = diff["anomalies"].as_array().unwrap_or(&empty);
+
+        if added.is_empty() && removed.is_empty() && new_conns.is_empty() && dropped.is_empty() {
+            println!("No changes since snapshot.");
+        } else {
+            if !added.is_empty() {
+                println!("+ NEW LISTENERS ({}):", added.len());
+                for s in added {
+                    println!("{}", fmt_socket(s));
+                }
+            }
+            if !removed.is_empty() {
+                println!("- REMOVED LISTENERS ({}):", removed.len());
+                for s in removed {
+                    println!("{}", fmt_socket(s));
+                }
+            }
+            if !new_conns.is_empty() {
+                println!("+ NEW CONNECTIONS ({}):", new_conns.len());
+                for s in new_conns {
+                    println!("{}", fmt_socket(s));
+                }
+            }
+            if !dropped.is_empty() {
+                println!("- DROPPED CONNECTIONS ({}):", dropped.len());
+                for s in dropped {
+                    println!("{}", fmt_socket(s));
+                }
+            }
+        }
+        if !anomalies.is_empty() {
+            println!("\nANOMALIES:");
+            for a in anomalies {
+                println!("  ! {}", a.as_str().unwrap_or(""));
+            }
+        }
     }
 
     Ok(RenderOutcome::HasResults)

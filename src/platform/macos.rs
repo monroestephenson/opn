@@ -546,8 +546,9 @@ impl Platform for MacOsPlatform {
 
         for line in text.lines().skip(1) {
             let cols: Vec<&str> = line.split_whitespace().collect();
-            // Name Mtu Network Address Ipkts Ierrs Ibytes Opkts Oerrs Obytes Coll
-            // 0    1   2       3       4     5     6      7     8     9      10
+            // With Address:    Name Mtu Network Address Ipkts Ierrs Ibytes Opkts Oerrs Obytes Coll (11 cols)
+            // Without Address: Name Mtu Network         Ipkts Ierrs Ibytes Opkts Oerrs Obytes Coll (10 cols)
+            // Loopback and some virtual interfaces omit the Address field.
             if cols.len() < 10 {
                 continue;
             }
@@ -555,12 +556,21 @@ impl Platform for MacOsPlatform {
             if seen.contains(&name) {
                 continue;
             }
-            let ipkts: u64 = cols[4].parse().unwrap_or(0);
-            let ierrs: u64 = cols[5].parse().unwrap_or(0);
-            let ibytes: u64 = cols[6].parse().unwrap_or(0);
-            let opkts: u64 = cols[7].parse().unwrap_or(0);
-            let oerrs: u64 = cols[8].parse().unwrap_or(0);
-            let obytes: u64 = cols[9].parse().unwrap_or(0);
+            // Detect column offset: if 11+ cols the Address field is present (offset 1).
+            let o = if cols.len() >= 11 { 1usize } else { 0usize };
+            let parse = |s: &str| -> u64 {
+                if s == "-" {
+                    0
+                } else {
+                    s.parse().unwrap_or(0)
+                }
+            };
+            let ipkts: u64 = parse(cols[3 + o]);
+            let ierrs: u64 = parse(cols[4 + o]);
+            let ibytes: u64 = parse(cols[5 + o]);
+            let opkts: u64 = parse(cols[6 + o]);
+            let oerrs: u64 = parse(cols[7 + o]);
+            let obytes: u64 = parse(cols[8 + o]);
 
             seen.insert(name.clone());
             results.push(InterfaceStats {

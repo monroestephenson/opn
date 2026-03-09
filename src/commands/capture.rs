@@ -84,7 +84,7 @@ pub fn run(
             let msg = if e.kind() == std::io::ErrorKind::NotFound {
                 String::from(
                     "tcpdump not available or insufficient permissions. \
-                     Try: sudo opn --llm --allow-write capture",
+                     Try: sudo opn --allow-write capture",
                 )
             } else {
                 format!("Failed to run tcpdump: {e}")
