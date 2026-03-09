@@ -280,11 +280,16 @@ mod macos_fw {
                     .filter(|l| !l.contains("ALTQ") && !l.contains("DIOCGETRULES"))
                     .collect::<Vec<_>>()
                     .join("\n");
-                Ok(if relevant_stderr.is_empty() {
+                let combined = if relevant_stderr.is_empty() {
                     stdout
                 } else {
                     format!("{}{}", stdout, relevant_stderr)
-                })
+                };
+                if combined.trim().is_empty() {
+                    Ok(String::from("No rules configured. Use 'opn --allow-write firewall block-ip <IP>' or 'block-port <PORT>' to add one."))
+                } else {
+                    Ok(combined)
+                }
             }
             Err(e) => Err(anyhow::anyhow!("Failed to run pfctl: {}", e)),
         }

@@ -1,9 +1,144 @@
 use std::collections::HashMap;
 use std::time::{Duration, Instant};
 
+use anyhow::Result;
+use pcap::{Capture, Device};
+
 use crate::agent::{self, reverse_dns, AgentResponse};
 use crate::render::RenderOutcome;
-use anyhow::Result;
+
+// ── packet parsing ──────────────────────────────────────────────────────────
+
+struct ParsedPacket {
+    src_ip: String,
+    src_port: u16,
+    dst_ip: String,
+    dst_port: u16,
+    proto: String,
+    length: u32,
+}
+
+/// Map link-layer header → (ip_offset, ip_version) for a given DLT type.
+fn link_offsets(data: &[u8], dlt: i32) -> Option<(usize, u8)> {
+    match dlt {
+        1 => {
+            // DLT_EN10MB – Ethernet
+            if data.len() < 14 {
+                return None;
+            }
+            let mut ethertype = u16::from_be_bytes([data[12], data[13]]);
+            let mut offset = 14usize;
+            // 802.1Q VLAN tag
+            if ethertype == 0x8100 && data.len() >= 18 {
+                ethertype = u16::from_be_bytes([data[16], data[17]]);
+                offset = 18;
+            }
+            match ethertype {
+                0x0800 => Some((offset, 4)),
+                0x86DD => Some((offset, 6)),
+                _ => None,
+            }
+        }
+        0 => {
+            // DLT_NULL – BSD loopback (4-byte AF in host byte order)
+            if data.len() < 4 {
+                return None;
+            }
+            let af = u32::from_ne_bytes([data[0], data[1], data[2], data[3]]);
+            match af {
+                2 => Some((4, 4)),  // AF_INET
+                30 => Some((4, 6)), // AF_INET6 on macOS
+                _ => None,
+            }
+        }
+        113 => {
+            // DLT_LINUX_SLL – Linux cooked capture
+            if data.len() < 16 {
+                return None;
+            }
+            let ethertype = u16::from_be_bytes([data[14], data[15]]);
+            match ethertype {
+                0x0800 => Some((16, 4)),
+                0x86DD => Some((16, 6)),
+                _ => None,
+            }
+        }
+        12 | 228 => Some((0, 4)), // DLT_RAW / DLT_IPV4
+        229 => Some((0, 6)),      // DLT_IPV6
+        _ => None,
+    }
+}
+
+fn parse_ipv4(d: &[u8]) -> Option<(String, String, u8, usize, u32)> {
+    if d.len() < 20 {
+        return None;
+    }
+    let ihl = (d[0] & 0x0F) as usize * 4;
+    if ihl < 20 || d.len() < ihl {
+        return None;
+    }
+    let total_len = u16::from_be_bytes([d[2], d[3]]) as u32;
+    let proto = d[9];
+    let src = std::net::Ipv4Addr::new(d[12], d[13], d[14], d[15]).to_string();
+    let dst = std::net::Ipv4Addr::new(d[16], d[17], d[18], d[19]).to_string();
+    Some((src, dst, proto, ihl, total_len))
+}
+
+fn parse_ipv6(d: &[u8]) -> Option<(String, String, u8, usize, u32)> {
+    if d.len() < 40 {
+        return None;
+    }
+    let payload_len = u16::from_be_bytes([d[4], d[5]]) as u32;
+    let next_hdr = d[6];
+    let src: [u8; 16] = d[8..24].try_into().ok()?;
+    let dst: [u8; 16] = d[24..40].try_into().ok()?;
+    let src_ip = std::net::Ipv6Addr::from(src).to_string();
+    let dst_ip = std::net::Ipv6Addr::from(dst).to_string();
+    Some((src_ip, dst_ip, next_hdr, 40, 40 + payload_len))
+}
+
+fn parse_transport(d: &[u8], proto: u8) -> (u16, u16, &'static str) {
+    match proto {
+        6 if d.len() >= 4 => (
+            u16::from_be_bytes([d[0], d[1]]),
+            u16::from_be_bytes([d[2], d[3]]),
+            "TCP",
+        ),
+        17 if d.len() >= 4 => (
+            u16::from_be_bytes([d[0], d[1]]),
+            u16::from_be_bytes([d[2], d[3]]),
+            "UDP",
+        ),
+        1 => (0, 0, "ICMP"),
+        58 => (0, 0, "ICMPv6"),
+        _ => (0, 0, "OTHER"),
+    }
+}
+
+fn parse_packet(data: &[u8], dlt: i32) -> Option<ParsedPacket> {
+    let (ip_offset, ip_ver) = link_offsets(data, dlt)?;
+    let ip_data = data.get(ip_offset..)?;
+
+    let (src_ip, dst_ip, proto_num, ip_hdr_len, total_len) = if ip_ver == 4 {
+        parse_ipv4(ip_data)?
+    } else {
+        parse_ipv6(ip_data)?
+    };
+
+    let transport = ip_data.get(ip_hdr_len..).unwrap_or(&[]);
+    let (src_port, dst_port, proto) = parse_transport(transport, proto_num);
+
+    Some(ParsedPacket {
+        src_ip,
+        src_port,
+        dst_ip,
+        dst_port,
+        proto: proto.to_string(),
+        length: total_len,
+    })
+}
+
+// ── main command ─────────────────────────────────────────────────────────────
 
 pub fn run(
     interface: Option<&str>,
@@ -14,20 +149,7 @@ pub fn run(
     llm: bool,
     allow_write: bool,
 ) -> Result<RenderOutcome> {
-    // Build tcpdump command
-    let mut args: Vec<String> = vec![
-        String::from("-nn"),
-        String::from("-q"),
-        String::from("-c"),
-        count.to_string(),
-    ];
-
-    if let Some(iface) = interface {
-        args.push(String::from("-i"));
-        args.push(iface.to_string());
-    }
-
-    // Build filter expression
+    // Build BPF filter
     let mut filter_parts: Vec<String> = Vec::new();
     if let Some(p) = port {
         filter_parts.push(format!("port {p}"));
@@ -35,121 +157,125 @@ pub fn run(
     if let Some(h) = host {
         filter_parts.push(format!("host {h}"));
     }
-    if !filter_parts.is_empty() {
-        args.push(filter_parts.join(" and "));
-    }
-
     let filter_expr = filter_parts.join(" and ");
-    let used_iface = interface.unwrap_or("(auto)").to_string();
+    let used_iface: String;
 
-    // Run tcpdump
-    let output = match std::process::Command::new("tcpdump")
-        .args(&args)
-        .stderr(std::process::Stdio::piped())
-        .stdout(std::process::Stdio::piped())
-        .spawn()
-    {
-        Ok(mut child) => {
-            if duration_secs > 0 {
-                let deadline = Instant::now() + Duration::from_secs(duration_secs + 2);
-                loop {
-                    match child.try_wait() {
-                        Ok(Some(_status)) => break,
-                        Ok(None) => {
-                            if Instant::now() >= deadline {
-                                let _ = child.kill();
-                                let _ = child.wait();
-                                return render_unavailable("tcpdump timed out", llm, allow_write);
-                            }
-                            std::thread::sleep(Duration::from_millis(100));
-                        }
-                        Err(e) => {
-                            return render_unavailable(
-                                &format!("tcpdump wait error: {e}"),
-                                llm,
-                                allow_write,
-                            );
-                        }
-                    }
-                }
+    // Find device
+    let device = if let Some(iface) = interface {
+        used_iface = iface.to_string();
+        Device::list()
+            .ok()
+            .and_then(|devs| devs.into_iter().find(|d| d.name == iface))
+            .unwrap_or_else(|| Device {
+                name: iface.to_string(),
+                desc: None,
+                addresses: vec![],
+                flags: pcap::DeviceFlags::empty(),
+            })
+    } else {
+        match Device::lookup() {
+            Ok(Some(d)) => {
+                used_iface = d.name.clone();
+                d
             }
-            match child.wait_with_output() {
-                Ok(o) => o,
-                Err(e) => {
-                    return render_unavailable(&format!("tcpdump error: {e}"), llm, allow_write);
-                }
+            _ => {
+                return render_unavailable("No network device found", llm, allow_write);
             }
         }
+    };
+
+    // Open capture (500ms read timeout so we can check the deadline)
+    let mut cap = match Capture::from_device(device)
+        .map_err(|e| e.to_string())
+        .and_then(|b| {
+            b.promisc(false)
+                .snaplen(65535)
+                .timeout(500)
+                .open()
+                .map_err(|e| e.to_string())
+        }) {
+        Ok(c) => c,
         Err(e) => {
-            let msg = if e.kind() == std::io::ErrorKind::NotFound {
+            let msg = if e.to_ascii_lowercase().contains("permission")
+                || e.contains("Operation not permitted")
+            {
                 String::from(
-                    "tcpdump not available or insufficient permissions. \
+                    "Insufficient permissions to capture packets. \
                      Try: sudo opn --allow-write capture",
                 )
             } else {
-                format!("Failed to run tcpdump: {e}")
+                format!("Failed to open capture on {used_iface}: {e}")
             };
             return render_unavailable(&msg, llm, allow_write);
         }
     };
 
-    // Check for permission error
-    let stderr_text = String::from_utf8_lossy(&output.stderr);
-    if stderr_text.contains("permission denied")
-        || stderr_text.contains("Operation not permitted")
-        || stderr_text.contains("You don't have permission")
-    {
-        return render_unavailable(
-            "tcpdump not available or insufficient permissions. \
-             Try: sudo opn --llm --allow-write capture",
-            llm,
-            allow_write,
-        );
+    if !filter_expr.is_empty() {
+        if let Err(e) = cap.filter(&filter_expr, true) {
+            return render_unavailable(
+                &format!("Invalid filter '{filter_expr}': {e}"),
+                llm,
+                allow_write,
+            );
+        }
     }
 
-    // Combine stdout (packet lines) and relevant stderr lines
-    let stdout_text = String::from_utf8_lossy(&output.stdout);
-    // tcpdump writes packets to stdout with -q
-    let all_text = format!("{}{}", stdout_text, stderr_text);
+    let dlt = cap.get_datalink().0;
+    let deadline = if duration_secs > 0 {
+        Some(Instant::now() + Duration::from_secs(duration_secs))
+    } else {
+        None
+    };
 
-    // Parse packets
-    // tcpdump -q -nn lines look like:
-    // HH:MM:SS.usec IP src.port > dst.port: proto, length N
-    // or just: HH:MM:SS.usec IP src > dst: flags ...
-    let mut packets: Vec<(String, String, u16, String, u16, String, u32)> = Vec::new();
-    // (ts, src_ip, src_port, dst_ip, dst_port, proto, length)
-
-    for line in all_text.lines() {
-        let line = line.trim();
-        if !line.contains(" IP ") && !line.contains(" IP6 ") {
-            continue;
+    // Capture loop
+    let mut packets: Vec<ParsedPacket> = Vec::new();
+    loop {
+        if packets.len() >= count as usize {
+            break;
         }
-        if let Some(p) = parse_tcpdump_line(line) {
-            packets.push(p);
+        if let Some(dl) = deadline {
+            if Instant::now() >= dl {
+                break;
+            }
+        }
+
+        match cap.next_packet() {
+            Ok(pkt) => {
+                if let Some(p) = parse_packet(pkt.data, dlt) {
+                    packets.push(p);
+                }
+            }
+            Err(pcap::Error::TimeoutExpired) => {
+                // Check deadline; otherwise keep waiting
+                if let Some(dl) = deadline {
+                    if Instant::now() >= dl {
+                        break;
+                    }
+                }
+            }
+            Err(_) => break,
         }
     }
 
     let packets_captured = packets.len();
 
-    // Aggregate connections: (src_ip:port, dst_ip:port, proto) -> (count, bytes, dst_ip)
-    // dst_ip stored separately so IPv6 addresses are extracted correctly without re-parsing.
+    // Aggregate connections: (src, dst, proto) → (count, bytes, dst_ip)
     let mut conn_map: HashMap<(String, String, String), (u32, u64, String)> = HashMap::new();
     let mut proto_dist: HashMap<String, u32> = HashMap::new();
     let mut talker_map: HashMap<String, u32> = HashMap::new();
 
-    for (_, src_ip, src_port, dst_ip, dst_port, proto, length) in &packets {
-        let src = format!("{src_ip}:{src_port}");
-        let dst = format!("{dst_ip}:{dst_port}");
-        let key = (src.clone(), dst.clone(), proto.clone());
-        let entry = conn_map.entry(key).or_insert((0, 0, dst_ip.clone()));
+    for p in &packets {
+        let src = format!("{}:{}", p.src_ip, p.src_port);
+        let dst = format!("{}:{}", p.dst_ip, p.dst_port);
+        let key = (src.clone(), dst.clone(), p.proto.clone());
+        let entry = conn_map.entry(key).or_insert((0, 0, p.dst_ip.clone()));
         entry.0 += 1;
-        entry.1 += *length as u64;
-        *proto_dist.entry(proto.clone()).or_insert(0) += 1;
-        *talker_map.entry(src_ip.clone()).or_insert(0) += 1;
-        *talker_map.entry(dst_ip.clone()).or_insert(0) += 1;
+        entry.1 += p.length as u64;
+        *proto_dist.entry(p.proto.clone()).or_insert(0) += 1;
+        *talker_map.entry(p.src_ip.clone()).or_insert(0) += 1;
+        *talker_map.entry(p.dst_ip.clone()).or_insert(0) += 1;
     }
 
-    // Build connection list
     let mut connections: Vec<serde_json::Value> = conn_map
         .iter()
         .map(|((src, dst, proto), (pkt_count, bytes, dst_ip))| {
@@ -167,7 +293,6 @@ pub fn run(
             v
         })
         .collect();
-
     connections.sort_by(|a, b| {
         b["packets"]
             .as_u64()
@@ -175,7 +300,6 @@ pub fn run(
             .cmp(&a["packets"].as_u64().unwrap_or(0))
     });
 
-    // Top talkers (sorted by packet count)
     let mut talkers: Vec<(&String, &u32)> = talker_map.iter().collect();
     talkers.sort_by(|a, b| b.1.cmp(a.1));
     let top_talkers: Vec<String> = talkers
@@ -262,75 +386,4 @@ fn render_unavailable(msg: &str, llm: bool, allow_write: bool) -> Result<RenderO
         eprintln!("{msg}");
     }
     Ok(RenderOutcome::NoResults)
-}
-
-/// Parse a tcpdump -q -nn line. Returns (ts, src_ip, src_port, dst_ip, dst_port, proto, length).
-fn parse_tcpdump_line(line: &str) -> Option<(String, String, u16, String, u16, String, u32)> {
-    let parts: Vec<&str> = line.splitn(2, ' ').collect();
-    if parts.len() < 2 {
-        return None;
-    }
-    let ts = parts[0].to_string();
-    let rest = parts[1];
-
-    // Skip "IP " or "IP6 "
-    let rest = if let Some(r) = rest.strip_prefix("IP6 ") {
-        r
-    } else if let Some(r) = rest.strip_prefix("IP ") {
-        r
-    } else {
-        return None;
-    };
-
-    // rest: "src.port > dst.port: proto, length N"
-    // or "src > dst: flags ..."
-    let arrow_idx = rest.find(" > ")?;
-    let src_part = &rest[..arrow_idx];
-    let after_arrow = &rest[arrow_idx + 3..];
-
-    let (dst_part, proto_len) = if let Some(colon_idx) = after_arrow.find(':') {
-        (&after_arrow[..colon_idx], &after_arrow[colon_idx + 1..])
-    } else {
-        (after_arrow, "")
-    };
-
-    // Extract proto from "proto, length N"
-    let proto = proto_len
-        .split_whitespace()
-        .next()
-        .unwrap_or("TCP")
-        .trim_end_matches(',')
-        .to_uppercase();
-    let proto = if proto.is_empty() {
-        String::from("TCP")
-    } else {
-        proto
-    };
-
-    // Extract length
-    let length: u32 = proto_len
-        .split_whitespace()
-        .enumerate()
-        .find(|(_, w)| w.eq_ignore_ascii_case("length"))
-        .and_then(|(i, _)| proto_len.split_whitespace().nth(i + 1))
-        .and_then(|s| s.parse().ok())
-        .unwrap_or(0);
-
-    let (src_ip, src_port) = parse_addr(src_part);
-    let (dst_ip, dst_port) = parse_addr(dst_part);
-
-    Some((ts, src_ip, src_port, dst_ip, dst_port, proto, length))
-}
-
-/// Parse "addr.port" or "addr" into (ip, port).
-fn parse_addr(s: &str) -> (String, u16) {
-    // IPv6 addresses won't have dots for port, handle simple split on last dot
-    if let Some(pos) = s.rfind('.') {
-        let potential_port = &s[pos + 1..];
-        if let Ok(port) = potential_port.parse::<u16>() {
-            return (s[..pos].to_string(), port);
-        }
-    }
-    // No port found
-    (s.to_string(), 0)
 }

@@ -26,7 +26,9 @@
       "Bash(ps:*)",
       "Bash(opn:*)",
       "Bash(cargo run:*)",
-      "Bash(sudo pfctl:*)"
+      "Bash(sudo pfctl:*)",
+      "Bash(ls:*)",
+      "Bash(xcrun --show-sdk-path)"
     ]
   }
 }

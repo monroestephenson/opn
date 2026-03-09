@@ -35,18 +35,6 @@ fn try_read_file(path: &str, max_lines: usize) -> Option<(String, Vec<String>)> 
     Some((path.to_string(), all_lines[start..].to_vec()))
 }
 
-/// Run a command and return its output lines (last `max_lines`).
-fn try_run_cmd(cmd: &str, args: &[&str], max_lines: usize) -> Option<Vec<String>> {
-    let output = std::process::Command::new(cmd).args(args).output().ok()?;
-    if !output.status.success() && output.stdout.is_empty() {
-        return None;
-    }
-    let text = String::from_utf8_lossy(&output.stdout);
-    let all: Vec<String> = text.lines().map(|l| l.to_string()).collect();
-    let start = all.len().saturating_sub(max_lines);
-    Some(all[start..].to_vec())
-}
-
 #[cfg(target_os = "linux")]
 fn get_log_lines(log_type: &str, lines: usize) -> (String, Vec<String>) {
     match log_type {
@@ -85,47 +73,20 @@ fn get_log_lines(log_type: &str, lines: usize) -> (String, Vec<String>) {
         _ => {} // system | all: fall through
     }
 
-    // System / all / fallback
+    // System / all / fallback — file-based only
     for path in &["/var/log/syslog", "/var/log/messages"] {
         if let Some(r) = try_read_file(path, lines) {
             return r;
         }
     }
-    // journalctl fallback
-    let lines_str = lines.to_string();
-    if let Some(ls) = try_run_cmd(
-        "journalctl",
-        &["-n", &lines_str, "--no-pager", "-o", "short"],
-        lines,
-    ) {
-        return (String::from("journalctl"), ls);
-    }
 
-    (String::from("(none)"), vec![])
+    (String::from("(none — no readable log files found)"), vec![])
 }
 
 #[cfg(target_os = "macos")]
 fn get_log_lines(log_type: &str, lines: usize) -> (String, Vec<String>) {
     match log_type {
         "auth" => {
-            let pred = "process == \"sshd\" OR process == \"sudo\"";
-            if let Some(ls) = try_run_cmd(
-                "log",
-                &[
-                    "show",
-                    "--last",
-                    "1h",
-                    "--predicate",
-                    pred,
-                    "--style",
-                    "syslog",
-                ],
-                lines,
-            ) {
-                if !ls.is_empty() {
-                    return (String::from("log show (auth)"), ls);
-                }
-            }
             if let Some(r) = try_read_file("/var/log/system.log", lines) {
                 return r;
             }
@@ -144,20 +105,15 @@ fn get_log_lines(log_type: &str, lines: usize) -> (String, Vec<String>) {
         _ => {} // system | all: fall through
     }
 
-    // system / all
-    let lines_str = lines.to_string();
-    if let Some(ls) = try_run_cmd("log", &["show", "--last", "1h", "--style", "syslog"], lines) {
-        if !ls.is_empty() {
-            // Apply tail manually — try_run_cmd already did it
-            let _ = lines_str; // suppress unused warning
-            return (String::from("log show"), ls);
-        }
-    }
+    // system / all — file-based only
     if let Some(r) = try_read_file("/var/log/system.log", lines) {
         return r;
     }
 
-    (String::from("(none)"), vec![])
+    (
+        String::from("(none — /var/log/system.log not readable; try sudo)"),
+        vec![],
+    )
 }
 
 #[cfg(not(any(target_os = "linux", target_os = "macos")))]

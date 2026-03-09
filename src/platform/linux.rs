@@ -719,41 +719,52 @@ impl Platform for LinuxPlatform {
     }
 
     fn net_config(&self) -> Result<NetConfig> {
-        // Routes: parse `ip route show`
+        // Routes: parse /proc/net/route (hex, little-endian IPv4)
         let routes = {
-            let stdout = std::process::Command::new("ip")
-                .args(["route", "show"])
-                .output()
-                .map(|o| o.stdout)
-                .unwrap_or_default();
-            let text = String::from_utf8_lossy(&stdout);
+            let content = fs::read_to_string("/proc/net/route").unwrap_or_default();
             let mut routes = Vec::new();
-            for line in text.lines() {
-                let parts: Vec<&str> = line.split_whitespace().collect();
-                if parts.is_empty() {
+            for line in content.lines().skip(1) {
+                let cols: Vec<&str> = line.split_whitespace().collect();
+                if cols.len() < 8 {
                     continue;
                 }
-                let destination = parts[0].to_string();
-                let gateway = parts
-                    .windows(2)
-                    .find(|w| w[0] == "via")
-                    .map(|w| w[1].to_string())
-                    .unwrap_or_else(|| String::from("*"));
-                let interface = parts
-                    .windows(2)
-                    .find(|w| w[0] == "dev")
-                    .map(|w| w[1].to_string())
-                    .unwrap_or_default();
-                let metric = parts
-                    .windows(2)
-                    .find(|w| w[0] == "metric")
-                    .and_then(|w| w[1].parse().ok())
-                    .unwrap_or(0);
+                let iface = cols[0].to_string();
+                // Destination and Gateway are hex little-endian u32
+                let dst_hex = u32::from_str_radix(cols[1], 16).unwrap_or(0);
+                let gw_hex = u32::from_str_radix(cols[2], 16).unwrap_or(0);
+                let flags = u32::from_str_radix(cols[3], 16).unwrap_or(0);
+                let mask_hex = u32::from_str_radix(cols[7], 16).unwrap_or(0);
+                let metric: u32 = cols[6].parse().unwrap_or(0);
+
+                // RTF_UP = 0x1, RTF_GATEWAY = 0x2
+                if (flags & 0x1) == 0 {
+                    continue; // skip non-UP routes
+                }
+
+                let dst_ip = std::net::Ipv4Addr::from(dst_hex.swap_bytes());
+                let gw_ip = std::net::Ipv4Addr::from(gw_hex.swap_bytes());
+                let prefix = mask_hex.swap_bytes().count_ones();
+
+                let destination = if dst_hex == 0 {
+                    String::from("default")
+                } else {
+                    format!("{}/{}", dst_ip, prefix)
+                };
+                let gateway = if gw_hex == 0 {
+                    String::from("*")
+                } else {
+                    gw_ip.to_string()
+                };
+                let mut flag_str = String::from("U");
+                if (flags & 0x2) != 0 {
+                    flag_str.push('G');
+                }
+
                 routes.push(crate::model::RouteEntry {
                     destination,
                     gateway,
-                    interface,
-                    flags: String::new(),
+                    interface: iface,
+                    flags: flag_str,
                     metric,
                 });
             }
@@ -780,57 +791,82 @@ impl Platform for LinuxPlatform {
             (servers, search)
         };
 
-        // Hostname
-        let hostname = fs::read_to_string("/etc/hostname")
-            .unwrap_or_default()
-            .trim()
-            .to_string();
-        let hostname = if hostname.is_empty() {
-            std::process::Command::new("hostname")
-                .output()
-                .ok()
-                .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+        // Hostname: /etc/hostname fallback to gethostname(2)
+        let hostname = {
+            let from_file = fs::read_to_string("/etc/hostname")
                 .unwrap_or_default()
-        } else {
-            hostname
+                .trim()
+                .to_string();
+            if !from_file.is_empty() {
+                from_file
+            } else {
+                let mut buf = vec![0u8; 256];
+                let ret =
+                    unsafe { libc::gethostname(buf.as_mut_ptr() as *mut libc::c_char, buf.len()) };
+                if ret == 0 {
+                    let nul = buf.iter().position(|b| *b == 0).unwrap_or(buf.len());
+                    String::from_utf8_lossy(&buf[..nul]).into_owned()
+                } else {
+                    String::new()
+                }
+            }
         };
 
-        // Interface addresses: parse `ip -4 -6 addr show`
+        // Interface addresses via getifaddrs(3)
         let interfaces = {
-            let stdout = std::process::Command::new("ip")
-                .args(["addr", "show"])
-                .output()
-                .map(|o| o.stdout)
-                .unwrap_or_default();
-            let text = String::from_utf8_lossy(&stdout);
-            let mut iface_map: std::collections::BTreeMap<String, Vec<String>> =
-                std::collections::BTreeMap::new();
-            let mut current_iface = String::new();
+            use std::collections::BTreeMap;
+            let mut iface_map: BTreeMap<String, Vec<String>> = BTreeMap::new();
 
-            for line in text.lines() {
-                if line.starts_with(|c: char| c.is_ascii_digit()) {
-                    // e.g. "2: eth0: <BROADCAST..."
-                    if let Some(name) = line.split(':').nth(1) {
-                        current_iface = name.trim().to_string();
-                        iface_map.entry(current_iface.clone()).or_default();
-                    }
-                } else {
-                    let trimmed = line.trim();
-                    if let Some(rest) = trimmed.strip_prefix("inet ") {
-                        if let Some(addr) = rest.split_whitespace().next() {
-                            iface_map
-                                .entry(current_iface.clone())
-                                .or_default()
-                                .push(addr.to_string());
+            unsafe {
+                let mut ifap: *mut libc::ifaddrs = std::ptr::null_mut();
+                if libc::getifaddrs(&mut ifap) == 0 {
+                    let mut ifa = ifap;
+                    while !ifa.is_null() {
+                        let ifa_ref = &*ifa;
+                        ifa = ifa_ref.ifa_next;
+
+                        if ifa_ref.ifa_name.is_null() || ifa_ref.ifa_addr.is_null() {
+                            continue;
                         }
-                    } else if let Some(rest) = trimmed.strip_prefix("inet6 ") {
-                        if let Some(addr) = rest.split_whitespace().next() {
+                        let name = std::ffi::CStr::from_ptr(ifa_ref.ifa_name)
+                            .to_string_lossy()
+                            .into_owned();
+                        iface_map.entry(name.clone()).or_default();
+
+                        let sa_family = (*ifa_ref.ifa_addr).sa_family as libc::c_int;
+                        if sa_family == libc::AF_INET {
+                            let sin = &*(ifa_ref.ifa_addr as *const libc::sockaddr_in);
+                            let ip = std::net::Ipv4Addr::from(u32::from_be(sin.sin_addr.s_addr));
+                            let prefix = if !ifa_ref.ifa_netmask.is_null() {
+                                let mask = &*(ifa_ref.ifa_netmask as *const libc::sockaddr_in);
+                                u32::from_be(mask.sin_addr.s_addr).count_ones()
+                            } else {
+                                32
+                            };
                             iface_map
-                                .entry(current_iface.clone())
+                                .entry(name)
                                 .or_default()
-                                .push(addr.to_string());
+                                .push(format!("{}/{}", ip, prefix));
+                        } else if sa_family == libc::AF_INET6 {
+                            let sin6 = &*(ifa_ref.ifa_addr as *const libc::sockaddr_in6);
+                            let ip = std::net::Ipv6Addr::from(sin6.sin6_addr.s6_addr);
+                            let prefix = if !ifa_ref.ifa_netmask.is_null() {
+                                let mask = &*(ifa_ref.ifa_netmask as *const libc::sockaddr_in6);
+                                mask.sin6_addr
+                                    .s6_addr
+                                    .iter()
+                                    .map(|b| b.count_ones())
+                                    .sum::<u32>()
+                            } else {
+                                128
+                            };
+                            iface_map
+                                .entry(name)
+                                .or_default()
+                                .push(format!("{}/{}", ip, prefix));
                         }
                     }
+                    libc::freeifaddrs(ifap);
                 }
             }
 
