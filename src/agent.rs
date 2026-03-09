@@ -300,7 +300,7 @@ pub fn socket_to_agent(
         protocol: s.protocol.to_string(),
         local: s.local_addr.clone(),
         remote: s.remote_addr.clone(),
-        state: s.state.clone(),
+        state: s.state.to_ascii_uppercase(),
         pid: s.process.pid,
         process: s.process.name.clone(),
         user: s.process.user.clone(),

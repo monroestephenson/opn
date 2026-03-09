@@ -126,6 +126,10 @@ pub fn run(
                 .get(&r.iface)
                 .map(|s| (s.rx_bytes, s.tx_bytes))
                 .unwrap_or((0, 0));
+            // Skip interfaces with no activity at all
+            if r.rx_bps == 0 && r.tx_bps == 0 && rx_total == 0 && tx_total == 0 {
+                continue;
+            }
             println!(
                 "{:<16} {:>14} {:>14} {:>14} {:>14}",
                 r.iface,
