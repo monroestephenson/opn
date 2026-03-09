@@ -47,4 +47,5 @@ jobs:
         run: sudo chown -R "$(id -u):$(id -g)" target
 
       - name: Run TTY watch manual tests (ignored set)
+        timeout-minutes: 2
         run: OPN_RUN_TTY_TESTS=1 cargo test --test watch_tty_manual -- --ignored

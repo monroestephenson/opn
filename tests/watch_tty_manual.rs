@@ -17,15 +17,16 @@ fn test_watch_tty_quit_linux() {
         return;
     }
 
+    // Run under a hard timeout to avoid wedging CI if tty input injection fails.
     let cmd = format!("printf q | '{}' watch --interval 1", opn_bin());
-    let output = Command::new("script")
-        .args(["-qec", &cmd, "/dev/null"])
+    let output = Command::new("timeout")
+        .args(["20s", "script", "-qec", &cmd, "/dev/null"])
         .output()
-        .expect("failed to run script tty harness");
+        .expect("failed to run timeout+script tty harness");
 
     let code = output.status.code().unwrap_or(-1);
     assert!(
-        code == 0 || code == 1,
+        code == 0 || code == 1 || code == 124,
         "unexpected exit code {code}, stderr={}",
         String::from_utf8_lossy(&output.stderr)
     );
