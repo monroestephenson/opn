@@ -35,7 +35,7 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
 
       - name: Run privileged firewall tests (ignored set)
-        run: sudo OPN_RUN_PRIVILEGED_TESTS=1 cargo test --test firewall_privileged_e2e -- --ignored
+        run: sudo env "PATH=$PATH" OPN_RUN_PRIVILEGED_TESTS=1 cargo test --test firewall_privileged_e2e -- --ignored
 
       - name: Run TTY watch manual tests (ignored set)
         run: OPN_RUN_TTY_TESTS=1 cargo test --test watch_tty_manual -- --ignored
