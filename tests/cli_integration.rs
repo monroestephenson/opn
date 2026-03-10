@@ -270,6 +270,7 @@ fn test_sockets_command_runs_or_returns_not_implemented() {
     }
 }
 
+#[cfg(not(feature = "watch"))]
 #[test]
 fn test_watch_without_feature_returns_error() {
     let output = opn_cmd()

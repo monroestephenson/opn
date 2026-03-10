@@ -28,7 +28,9 @@
       "Bash(cargo run:*)",
       "Bash(sudo pfctl:*)",
       "Bash(ls:*)",
-      "Bash(xcrun --show-sdk-path)"
+      "Bash(xcrun --show-sdk-path)",
+      "Bash(ssh -V)",
+      "Bash(/usr/sbin/sshd -V)"
     ]
   }
 }

@@ -28,6 +28,8 @@ pub use macos::MacOsPlatform as NativePlatform;
 
 #[cfg(target_os = "linux")]
 mod linux;
+#[cfg(all(target_os = "linux", feature = "ebpf"))]
+mod linux_ebpf;
 #[cfg(target_os = "linux")]
 pub use linux::LinuxPlatform as NativePlatform;
 

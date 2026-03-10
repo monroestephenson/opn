@@ -6,15 +6,49 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
+#[cfg(feature = "ebpf")]
+use super::linux_ebpf::EbpfCollector;
 use super::Platform;
 use crate::model::*;
 use crate::net;
 
-pub struct LinuxPlatform;
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LinuxSocketBackend {
+    Procfs,
+    #[cfg(feature = "ebpf")]
+    Ebpf,
+}
+
+pub struct LinuxPlatform {
+    socket_backend: LinuxSocketBackend,
+}
 
 impl LinuxPlatform {
     pub fn new() -> Self {
-        LinuxPlatform
+        Self {
+            socket_backend: Self::default_socket_backend(),
+        }
+    }
+
+    pub fn with_socket_backend(socket_backend: LinuxSocketBackend) -> Self {
+        Self { socket_backend }
+    }
+
+    pub fn socket_backend(&self) -> LinuxSocketBackend {
+        self.socket_backend
+    }
+
+    fn default_socket_backend() -> LinuxSocketBackend {
+        match std::env::var("OPN_LINUX_SOCKET_BACKEND")
+            .ok()
+            .as_deref()
+            .map(str::trim)
+        {
+            Some("procfs") => LinuxSocketBackend::Procfs,
+            #[cfg(feature = "ebpf")]
+            Some("ebpf") => LinuxSocketBackend::Ebpf,
+            _ => LinuxSocketBackend::Procfs,
+        }
     }
 
     fn uid_to_username(uid: u32) -> String {
@@ -209,6 +243,18 @@ impl LinuxPlatform {
         port_filter: Option<u16>,
         filter: &QueryFilter,
     ) -> Result<Vec<SocketEntry>> {
+        match self.socket_backend {
+            LinuxSocketBackend::Procfs => self.collect_sockets_procfs(port_filter, filter),
+            #[cfg(feature = "ebpf")]
+            LinuxSocketBackend::Ebpf => self.collect_sockets_ebpf(port_filter, filter),
+        }
+    }
+
+    fn collect_sockets_procfs(
+        &self,
+        port_filter: Option<u16>,
+        filter: &QueryFilter,
+    ) -> Result<Vec<SocketEntry>> {
         let inode_map = Self::build_inode_socket_map(port_filter, filter);
         if inode_map.is_empty() {
             return Ok(Vec::new());
@@ -282,6 +328,22 @@ impl LinuxPlatform {
         }
 
         Ok(results)
+    }
+
+    #[cfg(feature = "ebpf")]
+    fn collect_sockets_ebpf(
+        &self,
+        port_filter: Option<u16>,
+        filter: &QueryFilter,
+    ) -> Result<Vec<SocketEntry>> {
+        let collector = EbpfCollector::from_env()?;
+        if collector.strict() && !collector.is_ready() {
+            anyhow::bail!(
+                "eBPF backend selected but no object is loaded; set OPN_EBPF_OBJECT to a compiled eBPF object"
+            );
+        }
+
+        collector.collect_snapshot(|| self.collect_sockets_procfs(port_filter, filter))
     }
 }
 
@@ -888,7 +950,7 @@ impl Platform for LinuxPlatform {
 
 #[cfg(test)]
 mod tests {
-    use super::LinuxPlatform;
+    use super::{LinuxPlatform, LinuxSocketBackend};
 
     #[test]
     fn test_parse_proc_start_time_parses_expected_field() {
@@ -900,5 +962,11 @@ mod tests {
     #[test]
     fn test_parse_proc_start_time_rejects_invalid_line() {
         assert_eq!(LinuxPlatform::parse_proc_start_time("1234 invalid"), None);
+    }
+
+    #[test]
+    fn test_with_socket_backend_uses_requested_backend() {
+        let platform = LinuxPlatform::with_socket_backend(LinuxSocketBackend::Procfs);
+        assert_eq!(platform.socket_backend(), LinuxSocketBackend::Procfs);
     }
 }
