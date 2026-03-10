@@ -1,0 +1,20 @@
+# Maintainer: Monroe Stephenson
+pkgname=opn-bin
+pkgver=0.3.1
+pkgrel=1
+pkgdesc="See what's using your ports and files"
+arch=('x86_64' 'aarch64')
+url="https://github.com/monroestephenson/opn"
+license=('MIT')
+provides=('opn')
+conflicts=('opn')
+
+source_x86_64=("opn-v${pkgver}-x86_64.tar.gz::https://github.com/monroestephenson/opn/releases/download/v${pkgver}/opn-v${pkgver}-x86_64-unknown-linux-gnu.tar.gz")
+source_aarch64=("opn-v${pkgver}-aarch64.tar.gz::https://github.com/monroestephenson/opn/releases/download/v${pkgver}/opn-v${pkgver}-aarch64-unknown-linux-gnu.tar.gz")
+
+sha256sums_x86_64=('PLACEHOLDER_X86_64')
+sha256sums_aarch64=('PLACEHOLDER_AARCH64')
+
+package() {
+    install -Dm755 opn "$pkgdir/usr/bin/opn"
+}
