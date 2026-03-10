@@ -149,7 +149,7 @@ pub struct AgentSocket {
     pub process: String,
     pub user: String,
     pub cmd: String,
-    #[serde(skip_serializing_if = "Vec::is_empty", rename = "tree")]
+    #[serde(default, skip_serializing_if = "Vec::is_empty", rename = "tree")]
     pub ancestry: Vec<AgentAncestor>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub rdns: Option<String>,
@@ -190,9 +190,9 @@ pub struct AgentResponse {
     pub caps: Vec<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub data: Option<serde_json::Value>,
-    #[serde(skip_serializing_if = "Vec::is_empty")]
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub hints: Vec<String>,
-    #[serde(skip_serializing_if = "Vec::is_empty")]
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub warnings: Vec<String>,
     pub actions: serde_json::Value,
 }
