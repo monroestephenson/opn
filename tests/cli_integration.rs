@@ -57,7 +57,7 @@ fn tmp_path_aliases(path: &str) -> Vec<String> {
 fn test_help_flag() {
     let output = opn_cmd().arg("--help").output().expect("failed to run opn");
     let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(stdout.contains("Inspect network state"));
+    assert!(stdout.contains("Investigate local network activity"));
     assert!(stdout.contains("port"));
     assert!(stdout.contains("file"));
     assert!(stdout.contains("pid"));

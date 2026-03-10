@@ -6,23 +6,27 @@ use crate::model::QueryFilter;
 #[command(
     name = "opn",
     version,
-    about = "Inspect network state: sockets, ports, processes, bandwidth, and firewall",
+    about = "Investigate local network activity for humans and agents",
     after_help = "Examples:
-  opn sockets                      List your open sockets
-  opn port 8080                    Who is listening on port 8080?
-  opn diagnose                     Full snapshot: sockets + interfaces + anomaly hints
-  opn history start                Start background socket history recorder
-  opn history events --port 4444   Show recorded events for port 4444
-  opn watch                        Live-updating socket view (press q to quit)
-  opn resources                    CPU/memory for processes with open sockets
-  opn bandwidth                    Measure current bandwidth per interface
-  opn logs --log-type auth         Show recent auth log activity
-  opn netconfig                    Routes, DNS servers, and interface addresses
-  opn capture                      Capture and summarize packets (needs root/sudo)
-  opn --allow-write firewall list  List managed firewall rules
-  opn --allow-write kill-port 8080 Kill all processes listening on port 8080
+  opn diagnose                      Current network picture with anomaly hints
+  opn watch                         Live investigation console (press q to quit)
+  opn history start                 Start background socket event recording
+  opn history events --port 4444    Show what changed for port 4444
+  opn port 8080                     Drill into who is listening on port 8080
+  opn pid 1234                      Drill into one process
+  opn snapshot --out baseline.json  Save a baseline for later diffing
+  opn diff baseline.json            Compare current state against a baseline
+  opn --llm diagnose                Structured investigation output for agents
+  opn resources                     CPU/memory for processes with open sockets
+  opn logs --log-type auth          Recent auth/system log context
+  opn capture --port 443            Packet summary for a suspicious flow
+  opn --allow-write firewall list   List managed firewall rules
+  opn --allow-write kill-port 8080  Kill all processes listening on port 8080
 
-Tip: use --json for machine-readable output, or --llm for LLM-optimized JSON."
+Workflow:
+  diagnose -> watch -> history -> drill down -> --llm / action
+
+Tip: use --json for generic machine-readable output, or --llm for compact agent-oriented JSON with suggested actions."
 )]
 pub struct Cli {
     #[command(subcommand)]
@@ -32,7 +36,7 @@ pub struct Cli {
     #[arg(long, global = true)]
     pub json: bool,
 
-    /// Output in LLM-optimized compact JSON with self-describing actions.
+    /// Output compact agent-oriented JSON with self-describing actions.
     #[arg(long = "llm", global = true)]
     pub llm: bool,
 
@@ -87,7 +91,7 @@ pub enum Command {
         filter: FilterArgs,
     },
 
-    /// Refresh and display live results continuously.
+    /// Live investigation console for sockets, one port, or one file.
     Watch {
         /// What to watch: sockets, one port, or one file.
         #[arg(long, value_enum, default_value_t = WatchTarget::Sockets)]
@@ -150,7 +154,7 @@ pub enum Command {
         filter: FilterArgs,
     },
 
-    /// Record and query socket history over time.
+    /// Record and query socket events over time.
     History {
         #[command(subcommand)]
         action: HistoryAction,
@@ -162,7 +166,7 @@ pub enum Command {
     /// Show TCP/IP stack health metrics (Linux only).
     Snmp,
 
-    /// Full network diagnostic: sockets + interfaces + metrics + anomalies in one call.
+    /// Summarize current network state with interfaces, metrics, and anomaly hints.
     Diagnose {
         #[command(flatten)]
         filter: FilterArgs,
@@ -174,7 +178,7 @@ pub enum Command {
         action: FirewallAction,
     },
 
-    /// Show CPU/memory/fd stats for processes with open sockets.
+    /// Show CPU/memory/fd stats for processes involved in network activity.
     Resources {
         #[command(flatten)]
         filter: FilterArgs,
@@ -183,7 +187,7 @@ pub enum Command {
     /// Show network configuration: routes, DNS, interface addresses.
     Netconfig,
 
-    /// Analyze network-related log entries.
+    /// Read network-relevant logs to add investigation context.
     Logs {
         /// Log type: auth, system, kernel, web, firewall, all.
         #[arg(long, default_value = "all")]
@@ -196,14 +200,14 @@ pub enum Command {
         filter: Option<String>,
     },
 
-    /// Measure network bandwidth by polling interface stats.
+    /// Measure interface bandwidth over a short interval.
     Bandwidth {
         /// Measurement duration in seconds (1-30).
         #[arg(long, default_value_t = 1, value_parser = clap::value_parser!(u64).range(1..=30))]
         duration: u64,
     },
 
-    /// Capture and summarize network packets (wraps tcpdump).
+    /// Capture and summarize packets for a suspicious flow.
     Capture {
         /// Network interface (default: auto).
         #[arg(long)]
@@ -253,7 +257,7 @@ pub enum FirewallAction {
 
 #[derive(Subcommand, Debug)]
 pub enum HistoryAction {
-    /// Start the background socket history recorder.
+    /// Start background socket event recording.
     Start {
         /// Poll interval in seconds (1-60).
         #[arg(long, default_value_t = 5, value_parser = clap::value_parser!(u64).range(1..=60))]
@@ -268,7 +272,7 @@ pub enum HistoryAction {
         data_dir: Option<std::path::PathBuf>,
     },
 
-    /// Run the recorder loop in the current process.
+    /// Run the event recorder loop in the current process.
     Record {
         /// Poll interval in seconds (1-60).
         #[arg(long, default_value_t = 5, value_parser = clap::value_parser!(u64).range(1..=60))]
@@ -308,7 +312,7 @@ pub enum HistoryAction {
         data_dir: Option<std::path::PathBuf>,
     },
 
-    /// Show recent socket history events.
+    /// Show recent socket lifecycle events.
     Events {
         /// Maximum number of events to show.
         #[arg(long, default_value_t = 50, value_parser = parse_history_limit)]

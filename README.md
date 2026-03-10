@@ -1,6 +1,8 @@
-# opn — A Modern lsof Replacement
+# opn — Local Network Detective for Humans and Agents
 
-A cross-platform CLI tool that replaces common `lsof` workflows. Reads process/file/socket info directly from OS APIs — no shelling out.
+`opn` is a cross-platform investigation CLI for understanding what a machine is doing on the network right now, what changed over time, and what action to take next.
+
+It still covers common `lsof` workflows, but the project has grown beyond simple file/port lookup. It reads process, file, socket, interface, and packet data directly from OS APIs with both human-friendly output and structured agent output via `--llm`.
 
 ## Installation
 
@@ -54,6 +56,26 @@ CI note:
 
 ## Usage
 
+### Core workflow
+
+Use `opn` as one investigation loop:
+
+```bash
+opn diagnose                     # Summarize current network state + anomaly hints
+opn watch                        # Keep a live console open while you investigate
+opn history start                # Record socket events in the background
+opn history events --port 4444   # See what changed for one port or process
+opn --llm diagnose               # Hand the same machine state to an agent
+```
+
+The mental model is:
+
+- `diagnose` for the current picture
+- `watch` for the live view
+- `history` for changes over time
+- `--llm` for structured machine-readable investigations
+- point tools like `port`, `pid`, `file`, and `deleted` for drilling down
+
 ### Find processes on a port
 
 ```bash
@@ -98,9 +120,15 @@ opn sockets --state LISTEN # Socket state filter
 opn port 8080 --pid 1234   # Filter by PID (`--filter-pid` alias still works)
 ```
 
-### Other commands
+### Investigation commands
 
 ```bash
+opn diagnose                     # Current-state summary + anomaly hints
+opn history start                # Start background socket event recorder
+opn history events --limit 25    # Show recent socket lifecycle changes
+opn snapshot --out baseline.json # Save a point-in-time baseline
+opn diff baseline.json           # Compare now vs that baseline
+opn --llm diagnose               # Compact structured output for agents/tools
 opn pid 1234               # Show open files for a PID
 opn deleted                # Find deleted-but-open files
 opn sockets                # List all open sockets
@@ -115,9 +143,12 @@ opn watch --target sockets --theme kanagawa
 | Feature | lsof | opn |
 |---------|------|-----|
 | Output format | Dense, hard to parse | Clean aligned columns or JSON |
-| JSON output | No | `--json` flag |
+| Structured output | No | `--json` and `--llm` |
 | Implementation | Shells out / kernel module | Direct OS API calls |
 | Speed | Slow (enumerates everything) | Fast (targeted queries) |
+| Live investigation | No | `watch` |
+| Change tracking | No | `history`, `snapshot`, `diff` |
+| Guided diagnosis | No | `diagnose` anomaly hints |
 | Cross-platform | Mostly Linux | Linux (`/proc`) + macOS (`libproc`/`netstat2`) |
 
 ## Quick Benchmark
