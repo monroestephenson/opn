@@ -11,6 +11,8 @@ use crate::model::QueryFilter;
   opn sockets                      List your open sockets
   opn port 8080                    Who is listening on port 8080?
   opn diagnose                     Full snapshot: sockets + interfaces + anomaly hints
+  opn history start                Start background socket history recorder
+  opn history events --port 4444   Show recorded events for port 4444
   opn watch                        Live-updating socket view (press q to quit)
   opn resources                    CPU/memory for processes with open sockets
   opn bandwidth                    Measure current bandwidth per interface
@@ -148,6 +150,12 @@ pub enum Command {
         filter: FilterArgs,
     },
 
+    /// Record and query socket history over time.
+    History {
+        #[command(subcommand)]
+        action: HistoryAction,
+    },
+
     /// Show network interface statistics.
     Interfaces,
 
@@ -243,6 +251,103 @@ pub enum FirewallAction {
     Undo,
 }
 
+#[derive(Subcommand, Debug)]
+pub enum HistoryAction {
+    /// Start the background socket history recorder.
+    Start {
+        /// Poll interval in seconds (1-60).
+        #[arg(long, default_value_t = 5, value_parser = clap::value_parser!(u64).range(1..=60))]
+        interval: u64,
+
+        /// Maximum number of events to retain in the ring buffer.
+        #[arg(long, default_value_t = 10_000, value_parser = parse_history_capacity)]
+        capacity: usize,
+
+        /// Override the history data directory.
+        #[arg(long, hide = true)]
+        data_dir: Option<std::path::PathBuf>,
+    },
+
+    /// Run the recorder loop in the current process.
+    Record {
+        /// Poll interval in seconds (1-60).
+        #[arg(long, default_value_t = 5, value_parser = clap::value_parser!(u64).range(1..=60))]
+        interval: u64,
+
+        /// Maximum number of events to retain in the ring buffer.
+        #[arg(long, default_value_t = 10_000, value_parser = parse_history_capacity)]
+        capacity: usize,
+
+        /// Run in the foreground instead of spawning a background process.
+        #[arg(long, hide = true)]
+        foreground: bool,
+
+        /// Stop after this many polling iterations.
+        #[arg(long, hide = true)]
+        iterations: Option<usize>,
+
+        /// Override the history data directory.
+        #[arg(long, hide = true)]
+        data_dir: Option<std::path::PathBuf>,
+
+        #[command(flatten)]
+        filter: FilterArgs,
+    },
+
+    /// Stop the background recorder.
+    Stop {
+        /// Override the history data directory.
+        #[arg(long, hide = true)]
+        data_dir: Option<std::path::PathBuf>,
+    },
+
+    /// Show recorder status.
+    Status {
+        /// Override the history data directory.
+        #[arg(long, hide = true)]
+        data_dir: Option<std::path::PathBuf>,
+    },
+
+    /// Show recent socket history events.
+    Events {
+        /// Maximum number of events to show.
+        #[arg(long, default_value_t = 50, value_parser = parse_history_limit)]
+        limit: usize,
+
+        /// Only show events at or after this Unix timestamp.
+        #[arg(long)]
+        since: Option<u64>,
+
+        /// Only show events at or before this Unix timestamp.
+        #[arg(long)]
+        until: Option<u64>,
+
+        /// Filter by local or remote port.
+        #[arg(long)]
+        port: Option<u16>,
+
+        /// Filter by process ID.
+        #[arg(long)]
+        pid: Option<u32>,
+
+        /// Filter by exact process name.
+        #[arg(long)]
+        process: Option<String>,
+
+        /// Filter by event kind: appeared, disappeared, state_changed.
+        #[arg(long)]
+        kind: Option<String>,
+
+        /// Filter by current or prior state.
+        #[arg(long)]
+        state: Option<String>,
+
+        /// Override the history data directory.
+        #[arg(long, hide = true)]
+        data_dir: Option<std::path::PathBuf>,
+    },
+}
+
 #[derive(Debug, Clone, Copy, ValueEnum, PartialEq, Eq)]
 pub enum WatchTarget {
     Sockets,
@@ -279,6 +384,28 @@ fn parse_lines(raw: &str) -> Result<usize, String> {
         Ok(value)
     } else {
         Err(String::from("lines must be in range 1..=10000"))
+    }
+}
+
+fn parse_history_capacity(raw: &str) -> Result<usize, String> {
+    let value: usize = raw
+        .parse()
+        .map_err(|_| String::from("capacity must be a positive integer"))?;
+    if (100..=1_000_000).contains(&value) {
+        Ok(value)
+    } else {
+        Err(String::from("capacity must be in range 100..=1000000"))
+    }
+}
+
+fn parse_history_limit(raw: &str) -> Result<usize, String> {
+    let value: usize = raw
+        .parse()
+        .map_err(|_| String::from("limit must be a positive integer"))?;
+    if (1..=10_000).contains(&value) {
+        Ok(value)
+    } else {
+        Err(String::from("limit must be in range 1..=10000"))
     }
 }
 

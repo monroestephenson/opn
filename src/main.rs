@@ -22,7 +22,7 @@ use agent::{
     build_actions, caps, current_ts, detect_anomalies, file_to_agent, print_agent_response,
     socket_to_agent, AgentResponse,
 };
-use cli::{Cli, Command};
+use cli::{Cli, Command, HistoryAction};
 use model::{KillSignal, OpenFile, QueryFilter, SocketEntry};
 use platform::{create_platform, Platform};
 use render::RenderOutcome;
@@ -154,6 +154,7 @@ fn command_label(command: &Command) -> String {
         Command::KillPort { port, .. } => format!("kill-port {port}"),
         Command::Snapshot { .. } => String::from("snapshot"),
         Command::Diff { .. } => String::from("diff"),
+        Command::History { .. } => String::from("history"),
         Command::Interfaces => String::from("interfaces"),
         Command::Snmp => String::from("snmp"),
         Command::Diagnose { .. } => String::from("diagnose"),
@@ -202,6 +203,13 @@ fn has_all_flag(cli: &Cli) -> bool {
         Command::KillPort { filter, .. } => filter.all,
         Command::Snapshot { filter, .. } => filter.all,
         Command::Diff { filter, .. } => filter.all,
+        Command::History { action } => match action {
+            HistoryAction::Record { filter, .. } => filter.all,
+            HistoryAction::Start { .. }
+            | HistoryAction::Stop { .. }
+            | HistoryAction::Status { .. }
+            | HistoryAction::Events { .. } => false,
+        },
         Command::Diagnose { filter } => filter.all,
         Command::Resources { filter } => filter.all,
         // These commands don't have filter args
@@ -388,6 +396,7 @@ fn main() -> ExitCode {
             let qf = QueryFilter::from(filter);
             commands::snapshot::run_diff(snapshot, &platform, &qf, cli.llm)
         }
+        Command::History { action } => commands::history::run(&platform, action, cli.json, cli.llm),
         Command::Interfaces => commands::interfaces::run(&platform, cli.llm, cli.allow_write),
         Command::Snmp => commands::snmp::run(&platform, cli.llm, cli.allow_write),
         Command::Diagnose { filter } => {
@@ -456,7 +465,7 @@ fn main() -> ExitCode {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::cli::{FilterArgs, FirewallAction, WatchTarget, WatchTheme};
+    use crate::cli::{FilterArgs, FirewallAction, HistoryAction, WatchTarget, WatchTheme};
 
     fn empty_filter() -> FilterArgs {
         FilterArgs {
@@ -554,6 +563,9 @@ mod tests {
                 snapshot: std::path::PathBuf::from("/tmp/s.json"),
                 filter: filter.clone(),
             }),
+            command_label(&Command::History {
+                action: HistoryAction::Status { data_dir: None },
+            }),
             command_label(&Command::Interfaces),
             command_label(&Command::Snmp),
             command_label(&Command::Diagnose {
@@ -582,6 +594,7 @@ mod tests {
         ];
 
         assert!(labels.contains(&"firewall".to_string()));
+        assert!(labels.contains(&"history".to_string()));
         assert!(labels.contains(&"interfaces".to_string()));
         assert!(labels.contains(&"capture".to_string()));
         assert!(labels.contains(&"kill 123".to_string()));

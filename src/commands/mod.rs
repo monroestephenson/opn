@@ -4,6 +4,7 @@ pub mod deleted;
 pub mod diagnose;
 pub mod file;
 pub mod firewall;
+pub mod history;
 pub mod interfaces;
 pub mod kill;
 pub mod logs;

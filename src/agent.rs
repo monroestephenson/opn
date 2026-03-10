@@ -241,6 +241,11 @@ pub fn build_actions(allow_write: bool) -> serde_json::Value {
         "diagnose":   "opn --llm diagnose",
         "snapshot":   "opn --llm snapshot [--out <FILE>]",
         "diff":       "opn --llm diff <SNAPSHOT_FILE>",
+        "history": {
+            "start":  "opn --llm history start [--interval SECS] [--capacity N]",
+            "status": "opn --llm history status",
+            "events": "opn --llm history events [--limit N] [--since TS] [--until TS] [--port PORT] [--pid PID] [--process NAME] [--kind appeared|disappeared|state_changed] [--state STATE]"
+        },
         "resources":  "opn --llm resources",
         "netconfig":  "opn --llm netconfig",
         "logs":       "opn --llm logs [--log-type auth|system|kernel|web|firewall|all] [--lines N] [--filter TEXT]",
