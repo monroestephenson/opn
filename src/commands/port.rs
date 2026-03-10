@@ -15,17 +15,28 @@ impl Tabular for SocketEntry {
             "LOCAL ADDRESS",
             "REMOTE ADDRESS",
             "STATE",
+            "SERVICE",
             "PID",
             "PROCESS",
         ]
     }
 
     fn row(&self) -> Vec<String> {
+        let local_port = self
+            .local_addr
+            .rsplit(':')
+            .next()
+            .and_then(|p| p.parse::<u16>().ok())
+            .unwrap_or(0);
+        let service = crate::proto_detect::detect(local_port, &self.process.name)
+            .unwrap_or("-")
+            .to_string();
         vec![
             self.protocol.to_string(),
             socket_display::display_local_addr(self),
             socket_display::display_remote_addr(self),
             self.state.clone(),
+            service,
             self.process.pid.to_string(),
             self.process.name.clone(),
         ]

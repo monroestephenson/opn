@@ -153,6 +153,10 @@ pub struct AgentSocket {
     pub ancestry: Vec<AgentAncestor>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub rdns: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub service: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub container: Option<String>,
 }
 
 #[derive(Serialize, Deserialize, Clone)]
@@ -296,6 +300,15 @@ pub fn socket_to_agent(
         None
     };
 
+    let local_port = s
+        .local_addr
+        .rsplit(':')
+        .next()
+        .and_then(|p| p.parse::<u16>().ok())
+        .unwrap_or(0);
+    let service = crate::proto_detect::detect(local_port, &s.process.name).map(|s| s.to_string());
+    let container = crate::container::detect(s.process.pid);
+
     AgentSocket {
         protocol: s.protocol.to_string(),
         local: s.local_addr.clone(),
@@ -313,6 +326,8 @@ pub fn socket_to_agent(
             })
             .collect(),
         rdns,
+        service,
+        container,
     }
 }
 
@@ -484,6 +499,8 @@ mod tests {
             cmd: "nc -l 4444".to_string(),
             ancestry: vec![],
             rdns: None,
+            service: None,
+            container: None,
         }];
         let hints = detect_anomalies(&sockets, &[]);
         assert!(!hints.is_empty());

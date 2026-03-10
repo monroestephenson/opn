@@ -14,6 +14,19 @@ pub struct WatchRunOptions<'a> {
 }
 
 #[cfg(feature = "watch")]
+struct DrillDownData {
+    entry: crate::model::SocketEntry,
+    resources: Option<crate::model::ProcessResources>,
+    ancestry: Vec<crate::model::ProcessAncestor>,
+}
+
+#[cfg(feature = "watch")]
+enum AppState {
+    List,
+    DrillDown(DrillDownData),
+}
+
+#[cfg(feature = "watch")]
 pub fn run(
     platform: &dyn crate::platform::Platform,
     opts: WatchRunOptions<'_>,
@@ -83,6 +96,7 @@ pub fn run(
     execute!(out, EnterAlternateScreen).context("failed to enter alternate screen")?;
     let backend = CrosstermBackend::new(out);
     let mut terminal = Terminal::new(backend).context("failed to create terminal")?;
+    let mut app_state = AppState::List;
     let mut paused = false;
     let mut sort_key = SortKey::Local;
     let mut last_tick = Instant::now();
@@ -122,7 +136,7 @@ pub fn run(
                 .split(area);
 
             let status = format!(
-                "opn watch {} | {} | sort={} | interval={}s | {} | j/k move, g/G top/bottom, x terminate, q quit",
+                "opn watch {} | {} | sort={} | interval={}s | {} | j/k move, g/G top/bottom, enter drill-down, x terminate, q quit",
                 title.to_ascii_lowercase(),
                 if paused { "paused" } else { "running" },
                 sort_key.label(),
@@ -194,6 +208,20 @@ pub fn run(
                     .style(Style::default().fg(palette.normal));
                 frame.render_widget(paragraph, popup);
             }
+
+            if let AppState::DrillDown(ref dd) = app_state {
+                let popup = centered_rect(85, 88, area);
+                frame.render_widget(Clear, popup);
+                let text = drill_down_text(dd, &palette);
+                let block = Block::default()
+                    .title(" opn · drill-down ")
+                    .borders(Borders::ALL)
+                    .style(Style::default().fg(palette.header));
+                let paragraph = Paragraph::new(text)
+                    .block(block)
+                    .style(Style::default().fg(palette.normal));
+                frame.render_widget(paragraph, popup);
+            }
         })?;
 
         let timeout = tick_rate.saturating_sub(last_tick.elapsed());
@@ -223,6 +251,20 @@ pub fn run(
                         }
                         _ => {}
                     }
+                } else if matches!(app_state, AppState::DrillDown(_)) {
+                    match key.code {
+                        KeyCode::Esc | KeyCode::Char('q') => {
+                            app_state = AppState::List;
+                            status_msg = String::new();
+                        }
+                        KeyCode::Char('x') => {
+                            if let AppState::DrillDown(ref dd) = app_state {
+                                confirm_kill =
+                                    Some((dd.entry.process.pid, dd.entry.process.name.clone()));
+                            }
+                        }
+                        _ => {}
+                    }
                 } else {
                     match key.code {
                         KeyCode::Char('q') => break Ok(()),
@@ -240,6 +282,22 @@ pub fn run(
                         KeyCode::Char('G') => {
                             if !rows.is_empty() {
                                 selected = rows.len() - 1;
+                            }
+                        }
+                        KeyCode::Enter => {
+                            if let Some(row) = rows.get(selected) {
+                                if let Some(ref entry) = row.socket_entry {
+                                    let pid = entry.process.pid;
+                                    let resources = platform.process_resources(pid).ok();
+                                    let ancestry =
+                                        platform.process_ancestry(pid).unwrap_or_default();
+                                    app_state = AppState::DrillDown(DrillDownData {
+                                        entry: entry.clone(),
+                                        resources,
+                                        ancestry,
+                                    });
+                                    status_msg = String::from("esc back · x kill");
+                                }
                             }
                         }
                         KeyCode::Char('x') => {
@@ -273,6 +331,7 @@ pub fn run(
 struct WatchRow {
     cols: [String; 6],
     pid: u32,
+    socket_entry: Option<crate::model::SocketEntry>,
 }
 
 #[cfg(feature = "watch")]
@@ -316,16 +375,41 @@ fn terminate_pid(pid: u32) -> anyhow::Result<()> {
 fn socket_rows(entries: &[crate::model::SocketEntry]) -> Vec<WatchRow> {
     entries
         .iter()
-        .map(|e| WatchRow {
-            cols: [
-                e.protocol.to_string(),
-                crate::socket_display::display_local_addr(e),
-                crate::socket_display::display_remote_addr(e),
-                e.state.clone(),
-                e.process.pid.to_string(),
-                e.process.name.clone(),
-            ],
-            pid: e.process.pid,
+        .map(|e| {
+            let local_port = e
+                .local_addr
+                .rsplit(':')
+                .next()
+                .and_then(|p| p.parse::<u16>().ok())
+                .unwrap_or(0);
+            let service = crate::proto_detect::detect(local_port, &e.process.name);
+            let container = crate::container::detect(e.process.pid);
+
+            let mut tags: Vec<String> = Vec::new();
+            if let Some(s) = service {
+                tags.push(s.to_string());
+            }
+            if let Some(c) = container {
+                tags.push(c);
+            }
+            let process_col = if tags.is_empty() {
+                e.process.name.clone()
+            } else {
+                format!("{} [{}]", e.process.name, tags.join(" · "))
+            };
+
+            WatchRow {
+                cols: [
+                    e.protocol.to_string(),
+                    crate::socket_display::display_local_addr(e),
+                    crate::socket_display::display_remote_addr(e),
+                    e.state.clone(),
+                    e.process.pid.to_string(),
+                    process_col,
+                ],
+                pid: e.process.pid,
+                socket_entry: Some(e.clone()),
+            }
         })
         .collect()
 }
@@ -366,6 +450,7 @@ fn file_rows(entries: &[crate::model::OpenFile]) -> Vec<WatchRow> {
                 },
             ],
             pid: e.process.pid,
+            socket_entry: None,
         })
         .collect()
 }
@@ -730,6 +815,149 @@ fn snapshot_rows(
             Ok(file_rows(&entries))
         }
     }
+}
+
+#[cfg(feature = "watch")]
+fn drill_down_text(dd: &DrillDownData, palette: &ThemePalette) -> ratatui::text::Text<'static> {
+    use ratatui::style::Stylize;
+    use ratatui::text::{Line, Span, Text};
+
+    let e = &dd.entry;
+    let local_port = e
+        .local_addr
+        .rsplit(':')
+        .next()
+        .and_then(|p: &str| p.parse::<u16>().ok())
+        .unwrap_or(0);
+    let service = crate::proto_detect::detect(local_port, &e.process.name)
+        .unwrap_or("-")
+        .to_string();
+    let container = crate::container::detect(e.process.pid).unwrap_or_else(|| "-".to_string());
+
+    let hl = palette.header;
+    let dim = palette.border;
+
+    let label = |s: &str| Span::styled(s.to_string(), ratatui::style::Style::default().fg(hl));
+    let val = |s: String| Span::raw(s);
+    let sep = || Span::styled("  ", ratatui::style::Style::default().fg(dim));
+
+    let mut lines: Vec<Line> = vec![
+        Line::from(""),
+        Line::from(vec![Span::styled(
+            " CONNECTION",
+            ratatui::style::Style::default().fg(hl).bold(),
+        )]),
+        Line::from(vec![
+            label("   Protocol "),
+            val(format!("{:<18}", e.protocol)),
+            label("Service  "),
+            val(service.clone()),
+        ]),
+        Line::from(vec![
+            label("   Local    "),
+            val(format!("{:<18}", e.local_addr)),
+            label("Remote   "),
+            val(e.remote_addr.clone()),
+        ]),
+        Line::from(vec![label("   State    "), val(e.state.clone())]),
+        Line::from(""),
+        Line::from(vec![Span::styled(
+            " PROCESS",
+            ratatui::style::Style::default().fg(hl).bold(),
+        )]),
+        Line::from(vec![
+            label("   PID      "),
+            val(format!("{:<18}", e.process.pid)),
+            label("User     "),
+            val(e.process.user.clone()),
+        ]),
+        Line::from(vec![
+            label("   Name     "),
+            val(format!("{:<18}", e.process.name)),
+            label("Container"),
+            val(container),
+        ]),
+        Line::from(vec![label("   Command  "), val(e.process.command.clone())]),
+        Line::from(""),
+    ];
+
+    // Resources section
+    lines.push(Line::from(vec![Span::styled(
+        " RESOURCES",
+        ratatui::style::Style::default().fg(hl).bold(),
+    )]));
+    if let Some(ref r) = dd.resources {
+        let mem_mb = r.mem_rss_kb as f64 / 1024.0;
+        lines.push(Line::from(vec![
+            label("   CPU      "),
+            val(format!("{:<18}", format!("{:.1}%", r.cpu_pct))),
+            label("Memory   "),
+            val(format!("{:.1} MB RSS", mem_mb)),
+        ]));
+        lines.push(Line::from(vec![
+            label("   Threads  "),
+            val(format!("{:<18}", r.threads)),
+            label("Open FDs "),
+            val(r.open_fds.to_string()),
+        ]));
+    } else {
+        lines.push(Line::from(vec![
+            sep(),
+            Span::styled(
+                "(unavailable — may need elevated privileges)",
+                ratatui::style::Style::default().fg(dim),
+            ),
+        ]));
+    }
+    lines.push(Line::from(""));
+
+    // Process tree section
+    lines.push(Line::from(vec![Span::styled(
+        " PROCESS TREE",
+        ratatui::style::Style::default().fg(hl).bold(),
+    )]));
+    if dd.ancestry.is_empty() {
+        lines.push(Line::from(vec![
+            label("   "),
+            val(format!("{} ({})", e.process.name, e.process.pid)),
+        ]));
+    } else {
+        for (i, ancestor) in dd.ancestry.iter().enumerate() {
+            let indent = "  ".repeat(i + 1);
+            let connector = if i == 0 {
+                "".to_string()
+            } else {
+                "└─ ".to_string()
+            };
+            lines.push(Line::from(vec![Span::styled(
+                format!(
+                    "  {}{}{} ({})",
+                    indent, connector, ancestor.name, ancestor.pid
+                ),
+                ratatui::style::Style::default().fg(dim),
+            )]));
+        }
+        let depth = dd.ancestry.len();
+        let indent = "  ".repeat(depth + 1);
+        lines.push(Line::from(vec![
+            Span::styled(
+                format!("  {}└─ ", indent),
+                ratatui::style::Style::default().fg(dim),
+            ),
+            Span::styled(
+                format!("{} ({}) ←", e.process.name, e.process.pid),
+                ratatui::style::Style::default().fg(hl).bold(),
+            ),
+        ]));
+    }
+
+    lines.push(Line::from(""));
+    lines.push(Line::from(vec![Span::styled(
+        "  esc back · x kill",
+        ratatui::style::Style::default().fg(dim),
+    )]));
+
+    Text::from(lines)
 }
 
 #[cfg(feature = "watch")]

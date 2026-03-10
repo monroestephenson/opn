@@ -31,6 +31,7 @@ mod tests {
                 "LOCAL ADDRESS",
                 "REMOTE ADDRESS",
                 "STATE",
+                "SERVICE",
                 "PID",
                 "PROCESS"
             ]
@@ -51,8 +52,9 @@ mod tests {
         assert_eq!(row[1], "127.0.0.1:80");
         assert_eq!(row[2], "-");
         assert_eq!(row[3], "LISTEN");
-        assert_eq!(row[4], "1234");
-        assert_eq!(row[5], "nginx");
+        assert_eq!(row[4], "HTTP"); // nginx on port 80 → HTTP
+        assert_eq!(row[5], "1234");
+        assert_eq!(row[6], "nginx");
     }
 
     #[test]

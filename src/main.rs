@@ -1,12 +1,14 @@
 mod agent;
 mod cli;
 mod commands;
+mod container;
 mod model;
 #[cfg(any(test, target_os = "linux"))]
 #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
 mod net;
 mod path_safety;
 mod platform;
+mod proto_detect;
 mod render;
 mod socket_display;
 mod watch;
