@@ -177,4 +177,26 @@ impl Platform for MockPlatform {
             interfaces: vec![],
         })
     }
+
+    fn socket_backend_label(&self) -> &'static str {
+        "mock"
+    }
+
+    fn socket_backend_detail(&self) -> Option<String> {
+        Some(String::from("mock data"))
+    }
+
+    fn backend_status(&self) -> Result<BackendStatus> {
+        Ok(BackendStatus {
+            backend: String::from("mock"),
+            ready: true,
+            supports_live_socket_activity: false,
+            strict_live_mode: false,
+            running_as_root: false,
+            object_path: None,
+            interface: None,
+            tracked_flow_count: 0,
+            load_error: None,
+        })
+    }
 }

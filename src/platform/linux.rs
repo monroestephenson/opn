@@ -5,9 +5,12 @@ use std::collections::HashSet;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+#[cfg(feature = "ebpf")]
+use std::sync::Mutex;
+use std::time::Duration;
 
 #[cfg(feature = "ebpf")]
-use super::linux_ebpf::EbpfCollector;
+use super::linux_ebpf::{EbpfCollector, EbpfConfig, EbpfSocketListingSource, EbpfSocketSnapshot};
 use super::Platform;
 use crate::model::*;
 use crate::net;
@@ -21,19 +24,29 @@ pub enum LinuxSocketBackend {
 
 pub struct LinuxPlatform {
     socket_backend: LinuxSocketBackend,
+    #[cfg(feature = "ebpf")]
+    ebpf_collector: Mutex<Option<EbpfCollector>>,
 }
 
 impl LinuxPlatform {
     pub fn new() -> Self {
         Self {
             socket_backend: Self::default_socket_backend(),
+            #[cfg(feature = "ebpf")]
+            ebpf_collector: Mutex::new(None),
         }
     }
 
+    #[cfg_attr(not(test), allow(dead_code))]
     pub fn with_socket_backend(socket_backend: LinuxSocketBackend) -> Self {
-        Self { socket_backend }
+        Self {
+            socket_backend,
+            #[cfg(feature = "ebpf")]
+            ebpf_collector: Mutex::new(None),
+        }
     }
 
+    #[cfg_attr(not(test), allow(dead_code))]
     pub fn socket_backend(&self) -> LinuxSocketBackend {
         self.socket_backend
     }
@@ -47,8 +60,15 @@ impl LinuxPlatform {
             Some("procfs") => LinuxSocketBackend::Procfs,
             #[cfg(feature = "ebpf")]
             Some("ebpf") => LinuxSocketBackend::Ebpf,
+            #[cfg(feature = "ebpf")]
+            _ if Self::should_auto_enable_ebpf() => LinuxSocketBackend::Ebpf,
             _ => LinuxSocketBackend::Procfs,
         }
+    }
+
+    #[cfg(feature = "ebpf")]
+    fn should_auto_enable_ebpf() -> bool {
+        (unsafe { libc::geteuid() == 0 }) && EbpfConfig::is_available()
     }
 
     fn uid_to_username(uid: u32) -> String {
@@ -336,14 +356,105 @@ impl LinuxPlatform {
         port_filter: Option<u16>,
         filter: &QueryFilter,
     ) -> Result<Vec<SocketEntry>> {
-        let collector = EbpfCollector::from_env()?;
-        if collector.strict() && !collector.is_ready() {
-            anyhow::bail!(
-                "eBPF backend selected but no object is loaded; set OPN_EBPF_OBJECT to a compiled eBPF object"
-            );
+        let mut collector = self
+            .ebpf_collector
+            .lock()
+            .map_err(|_| anyhow::anyhow!("failed to lock eBPF collector"))?;
+        let collector = collector.get_or_insert(EbpfCollector::from_env()?);
+        collector.set_last_listing_source(EbpfSocketListingSource::None);
+        let _ = collector.wait_for_events(Duration::from_millis(1000));
+        let strict = collector.strict();
+        let snapshots = collector.collect_snapshot(|| Ok(Vec::new()))?;
+        if snapshots.is_empty() {
+            if strict {
+                return Ok(Vec::new());
+            }
+            let procfs_entries = self.collect_sockets_procfs(port_filter, filter)?;
+            collector.seed_from_sockets(&procfs_entries);
+            collector.set_last_listing_source(EbpfSocketListingSource::ProcfsFallback);
+            return Ok(procfs_entries);
+        }
+        collector.set_last_listing_source(EbpfSocketListingSource::Live);
+
+        let mut results = Vec::new();
+        for snapshot in snapshots {
+            if !self.snapshot_matches(&snapshot, port_filter, filter) {
+                continue;
+            }
+
+            let process = self
+                .process_info(snapshot.key.pid)
+                .unwrap_or_else(|_| ProcessInfo {
+                    pid: snapshot.key.pid,
+                    name: snapshot.comm.clone(),
+                    user: String::from("?"),
+                    uid: 0,
+                    command: snapshot.comm.clone(),
+                });
+            if !Self::matches_process_filter(&process, filter) {
+                continue;
+            }
+
+            results.push(SocketEntry {
+                protocol: if snapshot.key.protocol.eq_ignore_ascii_case("udp") {
+                    Protocol::Udp
+                } else {
+                    Protocol::Tcp
+                },
+                local_addr: snapshot.key.local_addr,
+                remote_addr: snapshot.key.remote_addr,
+                state: snapshot.state,
+                process: Arc::new(process),
+            });
         }
 
-        collector.collect_snapshot(|| self.collect_sockets_procfs(port_filter, filter))
+        if results.is_empty() && !strict {
+            let procfs_entries = self.collect_sockets_procfs(port_filter, filter)?;
+            collector.seed_from_sockets(&procfs_entries);
+            collector.set_last_listing_source(EbpfSocketListingSource::ProcfsFallback);
+            Ok(procfs_entries)
+        } else {
+            Ok(results)
+        }
+    }
+
+    #[cfg(feature = "ebpf")]
+    fn snapshot_matches(
+        &self,
+        snapshot: &EbpfSocketSnapshot,
+        port_filter: Option<u16>,
+        filter: &QueryFilter,
+    ) -> bool {
+        if let Some(port) = port_filter {
+            let matches_local = snapshot
+                .key
+                .local_addr
+                .rsplit(':')
+                .next()
+                .and_then(|p| p.parse::<u16>().ok())
+                == Some(port);
+            if !matches_local {
+                return false;
+            }
+        }
+        if let Some(state) = &filter.state {
+            if !snapshot.state.eq_ignore_ascii_case(state) {
+                return false;
+            }
+        }
+        if filter.tcp && !snapshot.key.protocol.eq_ignore_ascii_case("tcp") {
+            return false;
+        }
+        if filter.udp && !snapshot.key.protocol.eq_ignore_ascii_case("udp") {
+            return false;
+        }
+        if filter.ipv4 && snapshot.key.local_addr.starts_with('[') {
+            return false;
+        }
+        if filter.ipv6 && !snapshot.key.local_addr.starts_with('[') {
+            return false;
+        }
+        true
     }
 }
 
@@ -945,6 +1056,223 @@ impl Platform for LinuxPlatform {
             hostname,
             interfaces,
         })
+    }
+
+    fn wait_for_socket_activity(&self, timeout: Duration) -> Result<bool> {
+        match self.socket_backend {
+            LinuxSocketBackend::Procfs => Ok(false),
+            #[cfg(feature = "ebpf")]
+            LinuxSocketBackend::Ebpf => {
+                let mut collector = self
+                    .ebpf_collector
+                    .lock()
+                    .map_err(|_| anyhow::anyhow!("failed to lock eBPF collector"))?;
+                let collector = collector.get_or_insert(EbpfCollector::from_env()?);
+                collector.wait_for_events(timeout).map(|count| count > 0)
+            }
+        }
+    }
+
+    fn supports_live_socket_activity(&self) -> bool {
+        match self.socket_backend {
+            LinuxSocketBackend::Procfs => false,
+            #[cfg(feature = "ebpf")]
+            LinuxSocketBackend::Ebpf => true,
+        }
+    }
+
+    fn drain_live_socket_activity(&self) -> Result<Vec<LiveSocketActivity>> {
+        match self.socket_backend {
+            LinuxSocketBackend::Procfs => Ok(Vec::new()),
+            #[cfg(feature = "ebpf")]
+            LinuxSocketBackend::Ebpf => {
+                let mut collector = self
+                    .ebpf_collector
+                    .lock()
+                    .map_err(|_| anyhow::anyhow!("failed to lock eBPF collector"))?;
+                let collector = collector.get_or_insert(EbpfCollector::from_env()?);
+                Ok(collector
+                    .drain_events()
+                    .into_iter()
+                    .map(|event| LiveSocketActivity {
+                        ts_ns: event.ts_ns,
+                        pid: event.key.pid,
+                        process: event.comm,
+                        protocol: event.key.protocol,
+                        local_addr: event.key.local_addr,
+                        remote_addr: event.key.remote_addr,
+                        kind: match event.kind {
+                            super::linux_ebpf::EbpfSocketEventKind::Listen => {
+                                LiveSocketActivityKind::Listen
+                            }
+                            super::linux_ebpf::EbpfSocketEventKind::Accept => {
+                                LiveSocketActivityKind::Accept
+                            }
+                            super::linux_ebpf::EbpfSocketEventKind::Connect => {
+                                LiveSocketActivityKind::Connect
+                            }
+                            super::linux_ebpf::EbpfSocketEventKind::Close => {
+                                LiveSocketActivityKind::Close
+                            }
+                            super::linux_ebpf::EbpfSocketEventKind::StateChange => {
+                                LiveSocketActivityKind::StateChange
+                            }
+                            super::linux_ebpf::EbpfSocketEventKind::Retransmit => {
+                                LiveSocketActivityKind::Retransmit
+                            }
+                        },
+                        rx_bytes: event.stats.rx_bytes,
+                        tx_bytes: event.stats.tx_bytes,
+                        retransmits: event.stats.retransmits,
+                        rtt_us: event.stats.rtt_us,
+                    })
+                    .collect())
+            }
+        }
+    }
+
+    fn list_live_socket_snapshots(&self) -> Result<Vec<LiveSocketSnapshot>> {
+        match self.socket_backend {
+            LinuxSocketBackend::Procfs => Ok(Vec::new()),
+            #[cfg(feature = "ebpf")]
+            LinuxSocketBackend::Ebpf => {
+                let mut collector = self
+                    .ebpf_collector
+                    .lock()
+                    .map_err(|_| anyhow::anyhow!("failed to lock eBPF collector"))?;
+                let collector = collector.get_or_insert(EbpfCollector::from_env()?);
+                let _ = collector.wait_for_events(Duration::from_millis(0));
+                Ok(collector
+                    .flow_snapshots()
+                    .into_iter()
+                    .map(|snapshot| LiveSocketSnapshot {
+                        pid: snapshot.key.pid,
+                        process: snapshot.comm,
+                        protocol: snapshot.key.protocol,
+                        local_addr: snapshot.key.local_addr,
+                        remote_addr: snapshot.key.remote_addr,
+                        state: snapshot.state,
+                        rx_bytes: snapshot.stats.rx_bytes,
+                        tx_bytes: snapshot.stats.tx_bytes,
+                        retransmits: snapshot.stats.retransmits,
+                        rtt_us: snapshot.stats.rtt_us,
+                    })
+                    .collect())
+            }
+        }
+    }
+
+    fn socket_backend_label(&self) -> &'static str {
+        match self.socket_backend {
+            LinuxSocketBackend::Procfs => "procfs",
+            #[cfg(feature = "ebpf")]
+            LinuxSocketBackend::Ebpf => "ebpf",
+        }
+    }
+
+    fn socket_backend_detail(&self) -> Option<String> {
+        match self.socket_backend {
+            LinuxSocketBackend::Procfs => Some(String::from("procfs snapshot")),
+            #[cfg(feature = "ebpf")]
+            LinuxSocketBackend::Ebpf => {
+                let collector = self.ebpf_collector.lock().ok()?;
+                let collector = collector.as_ref()?;
+                Some(match collector.last_listing_source() {
+                    EbpfSocketListingSource::None => String::from("eBPF collector"),
+                    EbpfSocketListingSource::Live => String::from("live eBPF flow table"),
+                    EbpfSocketListingSource::ProcfsFallback => {
+                        String::from("procfs snapshot fallback via eBPF backend")
+                    }
+                })
+            }
+        }
+    }
+
+    fn strict_live_socket_mode(&self) -> bool {
+        match self.socket_backend {
+            LinuxSocketBackend::Procfs => false,
+            #[cfg(feature = "ebpf")]
+            LinuxSocketBackend::Ebpf => {
+                if let Ok(mut collector) = self.ebpf_collector.lock() {
+                    if collector.is_none() {
+                        *collector = EbpfCollector::from_env().ok();
+                    }
+                    if let Some(collector) = collector.as_ref() {
+                        return collector.strict();
+                    }
+                }
+                EbpfConfig::from_env().strict
+            }
+        }
+    }
+
+    fn backend_status(&self) -> Result<BackendStatus> {
+        let running_as_root = unsafe { libc::geteuid() == 0 };
+        match self.socket_backend {
+            LinuxSocketBackend::Procfs => Ok(BackendStatus {
+                backend: String::from("procfs"),
+                ready: true,
+                supports_live_socket_activity: false,
+                strict_live_mode: false,
+                running_as_root,
+                object_path: None,
+                interface: None,
+                tracked_flow_count: 0,
+                load_error: None,
+            }),
+            #[cfg(feature = "ebpf")]
+            LinuxSocketBackend::Ebpf => {
+                let config = EbpfConfig::from_env();
+                let mut status = BackendStatus {
+                    backend: String::from("ebpf"),
+                    ready: false,
+                    supports_live_socket_activity: true,
+                    strict_live_mode: config.strict,
+                    running_as_root,
+                    object_path: config
+                        .object_path
+                        .as_ref()
+                        .map(|path| path.display().to_string()),
+                    interface: config.interface.clone(),
+                    tracked_flow_count: 0,
+                    load_error: None,
+                };
+
+                let mut collector = self
+                    .ebpf_collector
+                    .lock()
+                    .map_err(|_| anyhow::anyhow!("failed to lock eBPF collector"))?;
+
+                if collector.is_none() {
+                    match EbpfCollector::from_env() {
+                        Ok(new_collector) => {
+                            *collector = Some(new_collector);
+                        }
+                        Err(error) => {
+                            status.load_error = Some(error.to_string());
+                            return Ok(status);
+                        }
+                    }
+                }
+
+                if let Some(collector) = collector.as_mut() {
+                    let _ = collector.wait_for_events(Duration::from_millis(0));
+                    status.ready = collector.is_ready();
+                    status.strict_live_mode = collector.strict();
+                    status.object_path = collector
+                        .object_path()
+                        .map(|path| path.display().to_string())
+                        .or(status.object_path);
+                    status.interface = collector
+                        .interface()
+                        .map(str::to_string)
+                        .or(status.interface);
+                    status.tracked_flow_count = collector.flow_snapshots().len();
+                }
+
+                Ok(status)
+            }
+        }
     }
 }
 

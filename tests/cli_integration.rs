@@ -64,6 +64,7 @@ fn test_help_flag() {
     assert!(stdout.contains("deleted"));
     assert!(stdout.contains("sockets"));
     assert!(stdout.contains("watch"));
+    assert!(stdout.contains("backend"));
     assert!(stdout.contains("--json"));
 }
 

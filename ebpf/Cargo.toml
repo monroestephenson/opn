@@ -1,0 +1,13 @@
+[package]
+name = "opn-ebpf"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+opn-ebpf-common = { path = "../ebpf-common", default-features = false }
+aya-ebpf = "0.1.1"
+aya-ebpf-bindings = "0.1.2"
+
+[[bin]]
+name = "opn-ebpf"
+path = "src/main.rs"

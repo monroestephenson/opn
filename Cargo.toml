@@ -3,6 +3,10 @@ name = "open-tool"
 version = "0.3.1"
 edition = "2021"
 
+[workspace]
+members = [".", "ebpf", "ebpf-common"]
+default-members = ["."]
+
 [[bin]]
 name = "opn"
 path = "src/main.rs"
@@ -25,6 +29,8 @@ netstat2 = "0.9"
 [target.'cfg(target_os = "linux")'.dependencies]
 aya = { version = "0.13", optional = true }
 aya-log = { version = "0.2", optional = true }
+bytes = { version = "1", optional = true }
+opn-ebpf-common = { path = "ebpf-common", optional = true }
 
 [dependencies.crossterm]
 version = "0.29"
@@ -37,7 +43,7 @@ optional = true
 [features]
 default = ["watch"]
 watch = ["dep:crossterm", "dep:ratatui"]
-ebpf = ["dep:aya", "dep:aya-log"]
+ebpf = ["dep:aya", "dep:aya-log", "dep:bytes", "dep:opn-ebpf-common"]
 
 [dev-dependencies]
 criterion = { version = "0.5", features = ["html_reports"] }

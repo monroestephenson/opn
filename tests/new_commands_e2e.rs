@@ -46,10 +46,25 @@ fn test_help_includes_new_commands() {
     let output = opn_cmd().arg("--help").output().expect("failed to run opn");
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(stdout.contains("resources"));
+    assert!(stdout.contains("backend"));
     assert!(stdout.contains("netconfig"));
     assert!(stdout.contains("logs"));
     assert!(stdout.contains("bandwidth"));
     assert!(stdout.contains("capture"));
+}
+
+#[test]
+fn test_backend_command_runs_and_reports_backend() {
+    let output = opn_cmd()
+        .args(["backend"])
+        .output()
+        .expect("failed to run opn backend");
+    assert_non_error_exit(&output);
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("BACKEND"),
+        "expected backend status output, got: {stdout}"
+    );
 }
 
 #[test]

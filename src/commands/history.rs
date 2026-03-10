@@ -3,6 +3,7 @@ use std::fs::OpenOptions;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
+use std::time::Duration;
 
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
@@ -10,7 +11,7 @@ use serde_json::json;
 
 use crate::agent::{self, AgentResponse, AgentSocket};
 use crate::cli::HistoryAction;
-use crate::model::QueryFilter;
+use crate::model::{LiveSocketActivity, LiveSocketActivityKind, QueryFilter};
 use crate::platform::Platform;
 use crate::render::RenderOutcome;
 
@@ -25,6 +26,11 @@ enum EventKind {
     Appeared,
     Disappeared,
     StateChanged,
+    Listen,
+    Accept,
+    Connect,
+    Close,
+    Retransmit,
 }
 
 impl EventKind {
@@ -33,6 +39,11 @@ impl EventKind {
             EventKind::Appeared => "appeared",
             EventKind::Disappeared => "disappeared",
             EventKind::StateChanged => "state_changed",
+            EventKind::Listen => "listen",
+            EventKind::Accept => "accept",
+            EventKind::Connect => "connect",
+            EventKind::Close => "close",
+            EventKind::Retransmit => "retransmit",
         }
     }
 }
@@ -46,6 +57,14 @@ struct HistoryEvent {
     previous_state: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     current_state: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    rx_bytes: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    tx_bytes: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    retransmits: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    rtt_us: Option<u32>,
 }
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -265,10 +284,33 @@ fn run_record(platform: &dyn Platform, opts: RecordOptions<'_>) -> Result<Render
     let result = (|| -> Result<()> {
         let mut remaining = opts.iterations.unwrap_or(usize::MAX);
         loop {
+            let live_wait = platform.supports_live_socket_activity();
+            let saw_activity = if live_wait {
+                platform.wait_for_socket_activity(Duration::from_secs(opts.interval))?
+            } else {
+                false
+            };
+            if live_wait && !saw_activity && opts.interval > 0 {
+                if remaining == 1 {
+                    break;
+                }
+                remaining = remaining.saturating_sub(1);
+                continue;
+            }
+
             let now = agent::current_ts();
+            let live_events = if live_wait {
+                platform.drain_live_socket_activity().unwrap_or_default()
+            } else {
+                Vec::new()
+            };
             let current = collect_agent_sockets(platform, opts.filter)?;
             let previous = read_state(&data_dir)?.unwrap_or_else(empty_state);
-            let events = diff_state(previous.sockets, current.clone(), now);
+            let events = if live_wait && !live_events.is_empty() {
+                live_activity_to_history_events(platform, &live_events, opts.filter)
+            } else {
+                diff_state(previous.sockets, current.clone(), now)
+            };
             append_events(&data_dir.join(EVENTS_FILE), &events, opts.capacity)?;
             write_state(
                 &data_dir,
@@ -283,7 +325,9 @@ fn run_record(platform: &dyn Platform, opts: RecordOptions<'_>) -> Result<Render
                 break;
             }
             remaining = remaining.saturating_sub(1);
-            std::thread::sleep(std::time::Duration::from_secs(opts.interval));
+            if !live_wait {
+                std::thread::sleep(Duration::from_secs(opts.interval));
+            }
         }
         Ok(())
     })();
@@ -549,6 +593,10 @@ fn diff_state(previous: Vec<AgentSocket>, current: Vec<AgentSocket>, ts: u64) ->
                 socket: socket.clone(),
                 previous_state: None,
                 current_state: Some(socket.state.clone()),
+                rx_bytes: None,
+                tx_bytes: None,
+                retransmits: None,
+                rtt_us: None,
             }),
             Some(previous_socket) if previous_socket.state != socket.state => {
                 events.push(HistoryEvent {
@@ -557,6 +605,10 @@ fn diff_state(previous: Vec<AgentSocket>, current: Vec<AgentSocket>, ts: u64) ->
                     socket: socket.clone(),
                     previous_state: Some(previous_socket.state.clone()),
                     current_state: Some(socket.state.clone()),
+                    rx_bytes: None,
+                    tx_bytes: None,
+                    retransmits: None,
+                    rtt_us: None,
                 })
             }
             _ => {}
@@ -570,6 +622,10 @@ fn diff_state(previous: Vec<AgentSocket>, current: Vec<AgentSocket>, ts: u64) ->
                 socket: socket.clone(),
                 previous_state: Some(socket.state.clone()),
                 current_state: None,
+                rx_bytes: None,
+                tx_bytes: None,
+                retransmits: None,
+                rtt_us: None,
             });
         }
     }
@@ -588,6 +644,129 @@ fn socket_identity(socket: &AgentSocket) -> String {
         "{}|{}|{}|{}|{}",
         socket.protocol, socket.local, socket.remote, socket.pid, socket.process
     )
+}
+
+fn live_activity_to_history_events(
+    platform: &dyn Platform,
+    events: &[LiveSocketActivity],
+    filter: &QueryFilter,
+) -> Vec<HistoryEvent> {
+    let mut history_events = Vec::new();
+    for event in events {
+        if let Some(history_event) = live_activity_to_history_event(platform, event, filter) {
+            history_events.push(history_event);
+        }
+    }
+    history_events.sort_by(|a, b| {
+        (a.ts, socket_identity(&a.socket), a.kind.as_str()).cmp(&(
+            b.ts,
+            socket_identity(&b.socket),
+            b.kind.as_str(),
+        ))
+    });
+    history_events
+}
+
+fn live_activity_to_history_event(
+    platform: &dyn Platform,
+    event: &LiveSocketActivity,
+    filter: &QueryFilter,
+) -> Option<HistoryEvent> {
+    if let Some(pid) = filter.pid {
+        if event.pid != pid {
+            return None;
+        }
+    }
+    if let Some(process_name) = &filter.process_name {
+        if &event.process != process_name {
+            return None;
+        }
+    }
+    if filter.tcp && !event.protocol.eq_ignore_ascii_case("tcp") {
+        return None;
+    }
+    if filter.udp && !event.protocol.eq_ignore_ascii_case("udp") {
+        return None;
+    }
+    if filter.ipv4 && event.local_addr.starts_with('[') {
+        return None;
+    }
+    if filter.ipv6 && !event.local_addr.starts_with('[') {
+        return None;
+    }
+    if let Some(state) = &filter.state {
+        let event_state = live_activity_state(event);
+        if !event_state.eq_ignore_ascii_case(state) {
+            return None;
+        }
+    }
+
+    let proc_info = platform.process_info(event.pid).ok();
+    let socket = AgentSocket {
+        protocol: event.protocol.clone(),
+        local: event.local_addr.clone(),
+        remote: event.remote_addr.clone(),
+        state: live_activity_state(event).to_string(),
+        pid: event.pid,
+        process: event.process.clone(),
+        user: proc_info
+            .as_ref()
+            .map(|p| p.user.clone())
+            .unwrap_or_default(),
+        cmd: proc_info
+            .as_ref()
+            .map(|p| p.command.clone())
+            .unwrap_or_else(|| event.process.clone()),
+        ancestry: Vec::new(),
+        rdns: None,
+        service: None,
+        container: crate::container::detect(event.pid),
+    };
+
+    let (kind, previous_state, current_state) = match event.kind {
+        LiveSocketActivityKind::Listen => (EventKind::Listen, None, Some(String::from("LISTEN"))),
+        LiveSocketActivityKind::Accept => {
+            (EventKind::Accept, None, Some(String::from("ESTABLISHED")))
+        }
+        LiveSocketActivityKind::Connect => {
+            (EventKind::Connect, None, Some(String::from("ESTABLISHED")))
+        }
+        LiveSocketActivityKind::Close => (
+            EventKind::Close,
+            Some(String::from("ESTABLISHED")),
+            Some(String::from("CLOSED")),
+        ),
+        LiveSocketActivityKind::StateChange => {
+            (EventKind::StateChanged, None, Some(String::from("ACTIVE")))
+        }
+        LiveSocketActivityKind::Retransmit => (
+            EventKind::Retransmit,
+            None,
+            Some(String::from("ESTABLISHED")),
+        ),
+    };
+
+    Some(HistoryEvent {
+        ts: event.ts_ns / 1_000_000_000,
+        kind,
+        socket,
+        previous_state,
+        current_state,
+        rx_bytes: Some(event.rx_bytes),
+        tx_bytes: Some(event.tx_bytes),
+        retransmits: Some(event.retransmits),
+        rtt_us: event.rtt_us,
+    })
+}
+
+fn live_activity_state(event: &LiveSocketActivity) -> &'static str {
+    match event.kind {
+        LiveSocketActivityKind::Listen => "LISTEN",
+        LiveSocketActivityKind::Accept | LiveSocketActivityKind::Connect => "ESTABLISHED",
+        LiveSocketActivityKind::Close => "CLOSED",
+        LiveSocketActivityKind::StateChange => "ACTIVE",
+        LiveSocketActivityKind::Retransmit => "ESTABLISHED",
+    }
 }
 
 fn append_events(path: &Path, new_events: &[HistoryEvent], capacity: usize) -> Result<()> {
@@ -810,6 +989,10 @@ mod tests {
                 socket: socket("127.0.0.1:1", "0.0.0.0:0", "LISTEN", 1),
                 previous_state: None,
                 current_state: Some("LISTEN".to_string()),
+                rx_bytes: None,
+                tx_bytes: None,
+                retransmits: None,
+                rtt_us: None,
             },
             HistoryEvent {
                 ts: 2,
@@ -817,6 +1000,10 @@ mod tests {
                 socket: socket("127.0.0.1:2", "0.0.0.0:0", "LISTEN", 2),
                 previous_state: None,
                 current_state: Some("LISTEN".to_string()),
+                rx_bytes: None,
+                tx_bytes: None,
+                retransmits: None,
+                rtt_us: None,
             },
             HistoryEvent {
                 ts: 3,
@@ -824,6 +1011,10 @@ mod tests {
                 socket: socket("127.0.0.1:3", "0.0.0.0:0", "LISTEN", 3),
                 previous_state: None,
                 current_state: Some("LISTEN".to_string()),
+                rx_bytes: None,
+                tx_bytes: None,
+                retransmits: None,
+                rtt_us: None,
             },
         ];
         append_events(&path, &events[..2], 2).unwrap();
@@ -843,6 +1034,10 @@ mod tests {
             socket: socket("127.0.0.1:4444", "10.0.0.2:55000", "ESTABLISHED", 22),
             previous_state: Some("SYN_RECV".to_string()),
             current_state: Some("ESTABLISHED".to_string()),
+            rx_bytes: None,
+            tx_bytes: None,
+            retransmits: None,
+            rtt_us: None,
         };
         assert!(event_matches(
             &event,

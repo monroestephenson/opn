@@ -193,6 +193,62 @@ pub struct NetConfig {
     pub interfaces: Vec<InterfaceAddr>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum LiveSocketActivityKind {
+    Listen,
+    Accept,
+    Connect,
+    Close,
+    StateChange,
+    Retransmit,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LiveSocketActivity {
+    pub ts_ns: u64,
+    pub pid: u32,
+    pub process: String,
+    pub protocol: String,
+    pub local_addr: String,
+    pub remote_addr: String,
+    pub kind: LiveSocketActivityKind,
+    pub rx_bytes: u64,
+    pub tx_bytes: u64,
+    pub retransmits: u64,
+    pub rtt_us: Option<u32>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LiveSocketSnapshot {
+    pub pid: u32,
+    pub process: String,
+    pub protocol: String,
+    pub local_addr: String,
+    pub remote_addr: String,
+    pub state: String,
+    pub rx_bytes: u64,
+    pub tx_bytes: u64,
+    pub retransmits: u64,
+    pub rtt_us: Option<u32>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BackendStatus {
+    pub backend: String,
+    pub ready: bool,
+    pub supports_live_socket_activity: bool,
+    pub strict_live_mode: bool,
+    pub running_as_root: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub object_path: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub interface: Option<String>,
+    pub tracked_flow_count: usize,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub load_error: Option<String>,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

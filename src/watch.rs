@@ -101,6 +101,8 @@ pub fn run(
     let mut sort_key = SortKey::Local;
     let mut last_tick = Instant::now();
     let tick_rate = Duration::from_secs(interval_secs);
+    let live_socket_activity = matches!(target, WatchTarget::Sockets | WatchTarget::Port)
+        && platform.supports_live_socket_activity();
     let mut rows = snapshot_rows(platform, target, port, file, filter)?;
     let mut selected = 0usize;
     let mut table_state = TableState::default();
@@ -118,8 +120,8 @@ pub fn run(
     let result: anyhow::Result<()> = (|| loop {
         rows.sort_by(|a, b| match sort_key {
             SortKey::Protocol => a.cols[0].cmp(&b.cols[0]).then(a.cols[1].cmp(&b.cols[1])),
-            SortKey::Local => a.cols[1].cmp(&b.cols[1]).then(a.cols[4].cmp(&b.cols[4])),
-            SortKey::Pid => a.cols[4].cmp(&b.cols[4]).then(a.cols[1].cmp(&b.cols[1])),
+            SortKey::Local => a.cols[1].cmp(&b.cols[1]).then(a.pid.cmp(&b.pid)),
+            SortKey::Pid => a.pid.cmp(&b.pid).then(a.cols[1].cmp(&b.cols[1])),
         });
         clamp_selection(&mut selected, rows.len());
         if rows.is_empty() {
@@ -136,9 +138,10 @@ pub fn run(
                 .split(area);
 
             let status = format!(
-                "opn watch {} | {} | sort={} | interval={}s | {} | j/k move, g/G top/bottom, enter drill-down, x terminate, q quit",
+                "opn watch {} | {}{} | sort={} | interval={}s | {} | j/k move, g/G top/bottom, enter drill-down, x terminate, q quit",
                 title.to_ascii_lowercase(),
                 if paused { "paused" } else { "running" },
+                if live_socket_activity { " · ebpf-live" } else { "" },
                 sort_key.label(),
                 interval_secs,
                 if show_socket_totals {
@@ -157,29 +160,32 @@ pub fn run(
                 chunks[0],
             );
 
-            let header = Row::new(headers).style(header_style(&palette));
+            let header = Row::new(headers.clone()).style(header_style(&palette));
             let rows_view = rows.iter().map(|e| {
-                Row::new(vec![
-                    Cell::from(e.cols[0].clone()),
-                    Cell::from(e.cols[1].clone()),
-                    Cell::from(e.cols[2].clone()),
-                    Cell::from(e.cols[3].clone()),
-                    Cell::from(e.cols[4].clone()),
-                    Cell::from(e.cols[5].clone()),
-                ])
-                .style(row_style(e, target, &palette))
+                Row::new(e.cols.iter().cloned().map(Cell::from).collect::<Vec<_>>())
+                    .style(row_style(e, target, &palette))
             });
-            let table = Table::new(
-                rows_view,
-                [
-                    Constraint::Length(12),
-                    Constraint::Length(24),
-                    Constraint::Length(24),
-                    Constraint::Length(16),
+            let constraints = match target {
+                WatchTarget::Sockets | WatchTarget::Port => vec![
                     Constraint::Length(8),
-                    Constraint::Min(8),
+                    Constraint::Length(22),
+                    Constraint::Length(22),
+                    Constraint::Length(12),
+                    Constraint::Length(18),
+                    Constraint::Length(14),
+                    Constraint::Length(8),
+                    Constraint::Min(12),
                 ],
-            )
+                WatchTarget::File => vec![
+                    Constraint::Length(8),
+                    Constraint::Length(16),
+                    Constraint::Length(14),
+                    Constraint::Length(6),
+                    Constraint::Length(8),
+                    Constraint::Min(12),
+                ],
+            };
+            let table = Table::new(rows_view, constraints)
             .header(header)
             .block(
                 Block::default()
@@ -225,7 +231,12 @@ pub fn run(
         })?;
 
         let timeout = tick_rate.saturating_sub(last_tick.elapsed());
-        if event::poll(timeout)? {
+        let input_timeout = if live_socket_activity {
+            timeout.min(Duration::from_millis(250))
+        } else {
+            timeout
+        };
+        if event::poll(input_timeout)? {
             if let Event::Key(key) = event::read()? {
                 if let Some((pid, _)) = confirm_kill.clone() {
                     match key.code {
@@ -302,7 +313,8 @@ pub fn run(
                         }
                         KeyCode::Char('x') => {
                             if let Some(row) = rows.get(selected) {
-                                confirm_kill = Some((row.pid, row.cols[5].clone()));
+                                confirm_kill =
+                                    Some((row.pid, row.cols.last().cloned().unwrap_or_default()));
                             } else {
                                 status_msg = String::from("no row selected");
                             }
@@ -311,6 +323,37 @@ pub fn run(
                     }
                 }
             }
+        }
+
+        if !paused
+            && live_socket_activity
+            && platform.wait_for_socket_activity(Duration::from_millis(0))?
+        {
+            let live_events = platform.drain_live_socket_activity().unwrap_or_default();
+            rows = snapshot_rows(platform, target, port, file, filter)?;
+            clamp_selection(&mut selected, rows.len());
+            if let Some(event) = live_events.last() {
+                status_msg = format!(
+                    "event={} pid={} proc={} {} -> {} rx={} tx={} retr={} rtt={}us",
+                    match event.kind {
+                        crate::model::LiveSocketActivityKind::Listen => "listen",
+                        crate::model::LiveSocketActivityKind::Accept => "accept",
+                        crate::model::LiveSocketActivityKind::Connect => "connect",
+                        crate::model::LiveSocketActivityKind::Close => "close",
+                        crate::model::LiveSocketActivityKind::StateChange => "state",
+                        crate::model::LiveSocketActivityKind::Retransmit => "retransmit",
+                    },
+                    event.pid,
+                    event.process,
+                    event.local_addr,
+                    event.remote_addr,
+                    event.rx_bytes,
+                    event.tx_bytes,
+                    event.retransmits,
+                    event.rtt_us.unwrap_or(0)
+                );
+            }
+            last_tick = Instant::now();
         }
 
         if !paused && last_tick.elapsed() >= tick_rate {
@@ -329,19 +372,21 @@ pub fn run(
 #[cfg(feature = "watch")]
 #[derive(Clone)]
 struct WatchRow {
-    cols: [String; 6],
+    cols: Vec<String>,
     pid: u32,
     socket_entry: Option<crate::model::SocketEntry>,
 }
 
 #[cfg(feature = "watch")]
-fn headers_for(target: crate::cli::WatchTarget) -> [&'static str; 6] {
+fn headers_for(target: crate::cli::WatchTarget) -> Vec<&'static str> {
     use crate::cli::WatchTarget;
     match target {
         WatchTarget::Sockets | WatchTarget::Port => {
-            ["PROTO", "LOCAL", "REMOTE", "STATE", "PID", "PROCESS"]
+            vec![
+                "PROTO", "LOCAL", "REMOTE", "STATE", "IO", "RTT/RETR", "PID", "PROCESS",
+            ]
         }
-        WatchTarget::File => ["PID", "PROCESS", "USER", "FD", "TYPE", "PATH"],
+        WatchTarget::File => vec!["PID", "PROCESS", "USER", "FD", "TYPE", "PATH"],
     }
 }
 
@@ -372,7 +417,27 @@ fn terminate_pid(pid: u32) -> anyhow::Result<()> {
 }
 
 #[cfg(feature = "watch")]
-fn socket_rows(entries: &[crate::model::SocketEntry]) -> Vec<WatchRow> {
+fn socket_rows(
+    entries: &[crate::model::SocketEntry],
+    live_snapshots: &[crate::model::LiveSocketSnapshot],
+) -> Vec<WatchRow> {
+    let snapshot_map: std::collections::HashMap<
+        (u32, String, String, String),
+        &crate::model::LiveSocketSnapshot,
+    > = live_snapshots
+        .iter()
+        .map(|snapshot| {
+            (
+                (
+                    snapshot.pid,
+                    snapshot.protocol.to_ascii_uppercase(),
+                    snapshot.local_addr.clone(),
+                    snapshot.remote_addr.clone(),
+                ),
+                snapshot,
+            )
+        })
+        .collect();
     entries
         .iter()
         .map(|e| {
@@ -397,13 +462,33 @@ fn socket_rows(entries: &[crate::model::SocketEntry]) -> Vec<WatchRow> {
             } else {
                 format!("{} [{}]", e.process.name, tags.join(" · "))
             };
+            let snapshot = snapshot_map.get(&(
+                e.process.pid,
+                e.protocol.to_string(),
+                e.local_addr.clone(),
+                e.remote_addr.clone(),
+            ));
+            let io_col = snapshot
+                .map(|snapshot| format!("{} / {}", snapshot.rx_bytes, snapshot.tx_bytes))
+                .unwrap_or_else(|| String::from("-"));
+            let rtt_retr_col = snapshot
+                .map(|snapshot| {
+                    format!(
+                        "{}us / {}",
+                        snapshot.rtt_us.unwrap_or(0),
+                        snapshot.retransmits
+                    )
+                })
+                .unwrap_or_else(|| String::from("-"));
 
             WatchRow {
-                cols: [
+                cols: vec![
                     e.protocol.to_string(),
                     crate::socket_display::display_local_addr(e),
                     crate::socket_display::display_remote_addr(e),
                     e.state.clone(),
+                    io_col,
+                    rtt_retr_col,
                     e.process.pid.to_string(),
                     process_col,
                 ],
@@ -437,7 +522,7 @@ fn file_rows(entries: &[crate::model::OpenFile]) -> Vec<WatchRow> {
     entries
         .iter()
         .map(|e| WatchRow {
-            cols: [
+            cols: vec![
                 e.process.pid.to_string(),
                 e.process.name.clone(),
                 e.process.user.clone(),
@@ -802,12 +887,14 @@ fn snapshot_rows(
     match target {
         WatchTarget::Sockets => {
             let entries = platform.list_sockets(filter)?;
-            Ok(socket_rows(&entries))
+            let live_snapshots = platform.list_live_socket_snapshots().unwrap_or_default();
+            Ok(socket_rows(&entries, &live_snapshots))
         }
         WatchTarget::Port => {
             let p = port.expect("validated by caller");
             let entries = platform.find_by_port(p, filter)?;
-            Ok(socket_rows(&entries))
+            let live_snapshots = platform.list_live_socket_snapshots().unwrap_or_default();
+            Ok(socket_rows(&entries, &live_snapshots))
         }
         WatchTarget::File => {
             let path = file.expect("validated by caller");

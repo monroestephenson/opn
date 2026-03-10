@@ -160,6 +160,7 @@ fn command_label(command: &Command) -> String {
         Command::Diagnose { .. } => String::from("diagnose"),
         Command::Firewall { .. } => String::from("firewall"),
         Command::Resources { .. } => String::from("resources"),
+        Command::Backend => String::from("backend"),
         Command::Netconfig => String::from("netconfig"),
         Command::Logs { .. } => String::from("logs"),
         Command::Bandwidth { .. } => String::from("bandwidth"),
@@ -212,6 +213,7 @@ fn has_all_flag(cli: &Cli) -> bool {
         },
         Command::Diagnose { filter } => filter.all,
         Command::Resources { filter } => filter.all,
+        Command::Backend => false,
         // These commands don't have filter args
         Command::Kill { .. }
         | Command::Interfaces
@@ -413,6 +415,7 @@ fn main() -> ExitCode {
             let qf = QueryFilter::from(filter);
             commands::resources::run(&platform, &qf, cli.llm, cli.allow_write)
         }
+        Command::Backend => commands::backend::run(&platform, cli.json),
         Command::Netconfig => commands::netconfig::run(&platform, cli.llm, cli.allow_write),
         Command::Logs {
             log_type,
@@ -455,7 +458,7 @@ fn main() -> ExitCode {
                 let payload = serde_json::json!({ "error": classify_error(&err.to_string()) });
                 println!("{payload}");
             } else {
-                eprintln!("{err}");
+                eprintln!("{err:#}");
             }
             ExitCode::from(2)
         }
@@ -577,6 +580,7 @@ mod tests {
             command_label(&Command::Resources {
                 filter: filter.clone(),
             }),
+            command_label(&Command::Backend),
             command_label(&Command::Netconfig),
             command_label(&Command::Logs {
                 log_type: "all".to_string(),
@@ -596,6 +600,7 @@ mod tests {
         assert!(labels.contains(&"firewall".to_string()));
         assert!(labels.contains(&"history".to_string()));
         assert!(labels.contains(&"interfaces".to_string()));
+        assert!(labels.contains(&"backend".to_string()));
         assert!(labels.contains(&"capture".to_string()));
         assert!(labels.contains(&"kill 123".to_string()));
         assert!(labels.contains(&"port 80".to_string()));
