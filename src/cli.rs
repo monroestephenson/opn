@@ -37,6 +37,11 @@ pub struct Cli {
     /// Enable write operations: kill, firewall. Handle with care.
     #[arg(long, global = true)]
     pub allow_write: bool,
+
+    /// SSH to a remote host and run the command there.
+    /// Format: user@host  (respects your ~/.ssh/config).
+    #[arg(long, global = true, value_name = "USER@HOST")]
+    pub host: Option<String>,
 }
 
 #[derive(Subcommand, Debug)]

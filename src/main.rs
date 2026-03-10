@@ -9,6 +9,7 @@ mod net;
 mod path_safety;
 mod platform;
 mod proto_detect;
+mod remote;
 mod render;
 mod socket_display;
 mod watch;
@@ -234,6 +235,18 @@ fn warn_partial_visibility(cli: &Cli) {
 ///   2 — error (invalid input, permission denied, runtime failure)
 fn main() -> ExitCode {
     let cli = Cli::parse();
+
+    if let Some(host) = &cli.host {
+        return match remote::run(host, &cli) {
+            Ok(RenderOutcome::HasResults) => ExitCode::SUCCESS,
+            Ok(RenderOutcome::NoResults) => ExitCode::from(1),
+            Err(e) => {
+                eprintln!("error: {e:#}");
+                ExitCode::from(2)
+            }
+        };
+    }
+
     let platform = create_platform();
 
     // Warn about partial visibility when --all is used without root/sudo.
