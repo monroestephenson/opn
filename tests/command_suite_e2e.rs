@@ -112,6 +112,59 @@ fn test_snapshot_then_diff_round_trip() {
 }
 
 #[test]
+fn test_history_record_status_and_events_round_trip() {
+    let dir = std::env::temp_dir().join(format!(
+        "opn-test-history-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("time went backwards")
+            .as_nanos()
+    ));
+    std::fs::create_dir_all(&dir).expect("failed to create history temp dir");
+
+    let record_output = opn_cmd()
+        .args([
+            "history",
+            "record",
+            "--foreground",
+            "--iterations",
+            "1",
+            "--interval",
+            "1",
+            "--capacity",
+            "100",
+            "--data-dir",
+        ])
+        .arg(&dir)
+        .output()
+        .expect("failed to run history record");
+    assert_non_error_exit(&record_output);
+
+    let status_output = opn_cmd()
+        .args(["history", "status", "--json", "--data-dir"])
+        .arg(&dir)
+        .output()
+        .expect("failed to run history status");
+    assert_non_error_exit(&status_output);
+    let status = parse_json_stdout(&status_output);
+    assert_eq!(status["schema"], "opn-history/1");
+    assert!(status["retained_events"].is_number());
+    assert!(status["tracked_sockets"].is_number());
+
+    let events_output = opn_cmd()
+        .args(["history", "events", "--json", "--limit", "5", "--data-dir"])
+        .arg(&dir)
+        .output()
+        .expect("failed to run history events");
+    assert_non_error_exit(&events_output);
+    let events = parse_json_stdout(&events_output);
+    assert!(events.is_array());
+
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+#[test]
 fn test_write_commands_require_allow_write() {
     let outputs = [
         opn_cmd()
