@@ -64,6 +64,7 @@ fn test_help_flag() {
     assert!(stdout.contains("deleted"));
     assert!(stdout.contains("sockets"));
     assert!(stdout.contains("watch"));
+    assert!(stdout.contains("backend"));
     assert!(stdout.contains("--json"));
 }
 
@@ -270,6 +271,7 @@ fn test_sockets_command_runs_or_returns_not_implemented() {
     }
 }
 
+#[cfg(not(feature = "watch"))]
 #[test]
 fn test_watch_without_feature_returns_error() {
     let output = opn_cmd()

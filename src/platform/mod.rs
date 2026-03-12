@@ -1,8 +1,9 @@
 use anyhow::Result;
+use std::time::Duration;
 
 use crate::model::{
-    InterfaceStats, KillSignal, NetConfig, OpenFile, ProcessAncestor, ProcessInfo,
-    ProcessResources, QueryFilter, SocketEntry, TcpMetrics,
+    BackendStatus, InterfaceStats, KillSignal, LiveSocketActivity, LiveSocketSnapshot, NetConfig,
+    OpenFile, ProcessAncestor, ProcessInfo, ProcessResources, QueryFilter, SocketEntry, TcpMetrics,
 };
 
 pub trait Platform: Send + Sync {
@@ -19,6 +20,45 @@ pub trait Platform: Send + Sync {
     fn kill_process(&self, pid: u32, signal: KillSignal) -> Result<()>;
     fn process_resources(&self, pid: u32) -> Result<ProcessResources>;
     fn net_config(&self) -> Result<NetConfig>;
+    fn supports_live_socket_activity(&self) -> bool {
+        false
+    }
+    fn wait_for_socket_activity(&self, timeout: Duration) -> Result<bool> {
+        let _ = timeout;
+        Ok(false)
+    }
+    fn drain_live_socket_activity(&self) -> Result<Vec<LiveSocketActivity>> {
+        Ok(Vec::new())
+    }
+    fn list_live_socket_snapshots(&self) -> Result<Vec<LiveSocketSnapshot>> {
+        Ok(Vec::new())
+    }
+    fn socket_backend_label(&self) -> &'static str {
+        "native"
+    }
+    fn socket_backend_detail(&self) -> Option<String> {
+        None
+    }
+    fn strict_live_socket_mode(&self) -> bool {
+        false
+    }
+    fn backend_status(&self) -> Result<BackendStatus> {
+        #[cfg(unix)]
+        let running_as_root = unsafe { libc::geteuid() == 0 };
+        #[cfg(not(unix))]
+        let running_as_root = false;
+        Ok(BackendStatus {
+            backend: self.socket_backend_label().to_string(),
+            ready: true,
+            supports_live_socket_activity: self.supports_live_socket_activity(),
+            strict_live_mode: self.strict_live_socket_mode(),
+            running_as_root,
+            object_path: None,
+            interface: None,
+            tracked_flow_count: self.list_live_socket_snapshots()?.len(),
+            load_error: None,
+        })
+    }
 }
 
 #[cfg(target_os = "macos")]
@@ -28,6 +68,8 @@ pub use macos::MacOsPlatform as NativePlatform;
 
 #[cfg(target_os = "linux")]
 mod linux;
+#[cfg(all(target_os = "linux", feature = "ebpf"))]
+mod linux_ebpf;
 #[cfg(target_os = "linux")]
 pub use linux::LinuxPlatform as NativePlatform;
 

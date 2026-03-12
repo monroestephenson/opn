@@ -18,6 +18,7 @@ use crate::model::QueryFilter;
   opn diff baseline.json            Compare current state against a baseline
   opn --llm diagnose                Structured investigation output for agents
   opn resources                     CPU/memory for processes with open sockets
+  opn backend                       Show which backend is active and whether eBPF is loaded
   opn logs --log-type auth          Recent auth/system log context
   opn capture --port 443            Packet summary for a suspicious flow
   opn --allow-write firewall list   List managed firewall rules
@@ -183,6 +184,9 @@ pub enum Command {
         #[command(flatten)]
         filter: FilterArgs,
     },
+
+    /// Show backend status: procfs/eBPF selection, readiness, and live-flow state.
+    Backend,
 
     /// Show network configuration: routes, DNS, interface addresses.
     Netconfig,

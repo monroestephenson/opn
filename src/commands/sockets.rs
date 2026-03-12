@@ -1,4 +1,5 @@
 use anyhow::Result;
+use std::time::Duration;
 
 use super::sort_sockets;
 use crate::model::QueryFilter;
@@ -8,10 +9,41 @@ use crate::render::RenderOutcome;
 
 pub fn run(platform: &dyn Platform, filter: &QueryFilter, json: bool) -> Result<RenderOutcome> {
     let mut entries = platform.list_sockets(filter)?;
+    let backend = platform.socket_backend_label();
+    let backend_detail = platform.socket_backend_detail();
+    let strict_live = platform.strict_live_socket_mode();
+
+    if entries.is_empty() && platform.supports_live_socket_activity() {
+        let observed = platform.wait_for_socket_activity(Duration::from_millis(750))?;
+        if observed {
+            entries = platform.list_sockets(filter)?;
+        }
+    }
+
     sort_sockets(&mut entries);
     let outcome = render::render(&entries, json);
-    if !json && matches!(outcome, crate::render::RenderOutcome::HasResults) {
-        eprintln!("\nTip: run 'opn diagnose' for a full network snapshot with anomaly detection.");
+    if !json {
+        match outcome {
+            crate::render::RenderOutcome::HasResults => {
+                match backend_detail {
+                    Some(detail) => eprintln!("\nbackend: {backend} ({detail})"),
+                    None => eprintln!("\nbackend: {backend}"),
+                }
+                eprintln!(
+                    "Tip: run 'opn diagnose' for a full network snapshot with anomaly detection."
+                );
+            }
+            crate::render::RenderOutcome::NoResults if strict_live => {
+                eprintln!(
+                    "backend: {backend} (strict live mode)\n\
+                     no live socket flows were observed during the startup window; \
+                     run `opn watch` or `opn history record` and generate traffic to populate the live table."
+                );
+            }
+            crate::render::RenderOutcome::NoResults => {
+                eprintln!("backend: {backend}");
+            }
+        }
     }
     Ok(outcome)
 }
