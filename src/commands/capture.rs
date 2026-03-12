@@ -319,7 +319,7 @@ pub fn run(
             "top_talkers": top_talkers
         });
         let resp = AgentResponse {
-            schema: String::from("opn-agent/1"),
+            schema: String::from("opn-agent/2"),
             ok: true,
             ts: agent::current_ts(),
             cmd: String::from("capture"),
@@ -331,6 +331,7 @@ pub fn run(
             } else {
                 vec![]
             },
+            next_steps: vec![],
             actions: agent::build_actions(allow_write),
         };
         agent::print_agent_response(&resp);
@@ -371,7 +372,7 @@ pub fn run(
 fn render_unavailable(msg: &str, llm: bool, allow_write: bool) -> Result<RenderOutcome> {
     if llm {
         let resp = AgentResponse {
-            schema: String::from("opn-agent/1"),
+            schema: String::from("opn-agent/2"),
             ok: false,
             ts: agent::current_ts(),
             cmd: String::from("capture"),
@@ -379,6 +380,7 @@ fn render_unavailable(msg: &str, llm: bool, allow_write: bool) -> Result<RenderO
             data: Some(serde_json::json!({"error": msg})),
             hints: vec![],
             warnings: vec![msg.to_string()],
+            next_steps: vec![],
             actions: agent::build_actions(allow_write),
         };
         agent::print_agent_response(&resp);

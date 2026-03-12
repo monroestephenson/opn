@@ -17,7 +17,7 @@ pub fn run_kill(
 
     if llm {
         let resp = AgentResponse {
-            schema: String::from("opn-agent/1"),
+            schema: String::from("opn-agent/2"),
             ok: true,
             ts: agent::current_ts(),
             cmd: format!("kill {} --signal {}", pid, signal),
@@ -29,6 +29,7 @@ pub fn run_kill(
             })),
             hints: vec![],
             warnings: vec![],
+            next_steps: vec![],
             actions: agent::build_actions(allow_write),
         };
         agent::print_agent_response(&resp);
@@ -52,7 +53,7 @@ pub fn run_kill_port(
     if sockets.is_empty() {
         if llm {
             let resp = AgentResponse {
-                schema: String::from("opn-agent/1"),
+                schema: String::from("opn-agent/2"),
                 ok: true,
                 ts: agent::current_ts(),
                 cmd: format!("kill-port {}", port),
@@ -62,6 +63,7 @@ pub fn run_kill_port(
                 ),
                 hints: vec![format!("No processes found on port {}", port)],
                 warnings: vec![],
+                next_steps: vec![],
                 actions: agent::build_actions(allow_write),
             };
             agent::print_agent_response(&resp);
@@ -88,7 +90,7 @@ pub fn run_kill_port(
 
     if llm {
         let resp = AgentResponse {
-            schema: String::from("opn-agent/1"),
+            schema: String::from("opn-agent/2"),
             ok: true,
             ts: agent::current_ts(),
             cmd: format!("kill-port {}", port),
@@ -96,6 +98,7 @@ pub fn run_kill_port(
             data: Some(serde_json::json!({ "port": port, "killed": killed })),
             hints: vec![],
             warnings: vec![],
+            next_steps: vec![],
             actions: agent::build_actions(allow_write),
         };
         agent::print_agent_response(&resp);

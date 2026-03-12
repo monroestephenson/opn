@@ -81,7 +81,7 @@ fn test_resources_llm_e2e_includes_current_pid_when_filtered() {
     let pid = std::process::id().to_string();
 
     let val = llm_json(&["--llm", "resources", "--pid", &pid]);
-    assert_eq!(val["schema"], "opn-agent/1");
+    assert_eq!(val["schema"], "opn-agent/2");
     assert!(val["data"].is_array(), "resources data should be array");
 
     let arr = val["data"]
@@ -117,7 +117,7 @@ fn test_resources_llm_e2e_includes_current_pid_when_filtered() {
 #[test]
 fn test_netconfig_llm_e2e_shape() {
     let val = llm_json(&["--llm", "netconfig"]);
-    assert_eq!(val["schema"], "opn-agent/1");
+    assert_eq!(val["schema"], "opn-agent/2");
     assert!(val["data"].is_object(), "netconfig data must be object");
     let data = &val["data"];
     assert!(data["routes"].is_array(), "routes must be array");
@@ -130,7 +130,7 @@ fn test_netconfig_llm_e2e_shape() {
 #[test]
 fn test_logs_llm_e2e_shape() {
     let val = llm_json(&["--llm", "logs", "--log-type", "all", "--lines", "50"]);
-    assert_eq!(val["schema"], "opn-agent/1");
+    assert_eq!(val["schema"], "opn-agent/2");
     let data = &val["data"];
     assert!(data.is_object(), "logs data must be object");
     assert!(data["source"].is_string(), "logs source must be string");
@@ -149,7 +149,7 @@ fn test_logs_llm_e2e_shape() {
 #[test]
 fn test_bandwidth_llm_e2e_shape() {
     let val = llm_json(&["--llm", "bandwidth", "--duration", "1"]);
-    assert_eq!(val["schema"], "opn-agent/1");
+    assert_eq!(val["schema"], "opn-agent/2");
     let data = &val["data"];
     assert!(data.is_object(), "bandwidth data must be object");
     assert!(
@@ -188,7 +188,7 @@ fn test_capture_llm_e2e_success_or_graceful_failure() {
     ]);
     let _ = t.join();
 
-    assert_eq!(val["schema"], "opn-agent/1");
+    assert_eq!(val["schema"], "opn-agent/2");
     assert_eq!(val["cmd"], "capture");
     assert!(val["ok"].is_boolean());
 

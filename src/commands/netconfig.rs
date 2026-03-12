@@ -9,7 +9,7 @@ pub fn run(platform: &dyn Platform, llm: bool, allow_write: bool) -> Result<Rend
 
     if llm {
         let resp = AgentResponse {
-            schema: String::from("opn-agent/1"),
+            schema: String::from("opn-agent/2"),
             ok: true,
             ts: agent::current_ts(),
             cmd: String::from("netconfig"),
@@ -17,6 +17,7 @@ pub fn run(platform: &dyn Platform, llm: bool, allow_write: bool) -> Result<Rend
             data: Some(serde_json::to_value(&config)?),
             hints: vec![],
             warnings: vec![],
+            next_steps: vec![],
             actions: agent::build_actions(allow_write),
         };
         agent::print_agent_response(&resp);

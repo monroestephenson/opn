@@ -50,7 +50,7 @@ pub fn run(
 
     if llm {
         let resp = AgentResponse {
-            schema: String::from("opn-agent/1"),
+            schema: String::from("opn-agent/2"),
             ok: true,
             ts: agent::current_ts(),
             cmd: String::from("diagnose"),
@@ -69,6 +69,7 @@ pub fn run(
             })),
             hints,
             warnings: vec![],
+            next_steps: vec![],
             actions: agent::build_actions(allow_write),
         };
         agent::print_agent_response(&resp);

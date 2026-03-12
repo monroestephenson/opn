@@ -28,7 +28,8 @@
       "Bash(cargo run:*)",
       "Bash(sudo pfctl:*)",
       "Bash(ls:*)",
-      "Bash(xcrun --show-sdk-path)"
+      "Bash(xcrun --show-sdk-path)",
+      "Bash(sed -i '' 's/schema: String::from\\(\"opn-agent\\\\/1\"\\)/schema: String::from\\(\"opn-agent\\\\/2\"\\)/g' src/commands/*.rs && sed -i '' 's/schema: \"opn-agent\\\\/1\"\\\\.to_string\\(\\)/schema: \"opn-agent\\\\/2\".to_string\\(\\)/g' src/commands/*.rs)"
     ]
   }
 }

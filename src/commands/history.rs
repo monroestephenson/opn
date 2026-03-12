@@ -375,7 +375,7 @@ fn run_status(data_dir_override: Option<&Path>, as_json: bool, llm: bool) -> Res
 
     if llm {
         let resp = AgentResponse {
-            schema: "opn-agent/1".to_string(),
+            schema: "opn-agent/2".to_string(),
             ok: true,
             ts: agent::current_ts(),
             cmd: "history status".to_string(),
@@ -383,6 +383,7 @@ fn run_status(data_dir_override: Option<&Path>, as_json: bool, llm: bool) -> Res
             data: Some(serde_json::to_value(&payload)?),
             hints: vec![],
             warnings: vec![],
+            next_steps: vec![],
             actions: agent::build_actions(false),
         };
         agent::print_agent_response(&resp);
@@ -417,7 +418,7 @@ fn run_status(data_dir_override: Option<&Path>, as_json: bool, llm: bool) -> Res
 fn print_events(events: Vec<HistoryEvent>, as_json: bool, llm: bool) -> Result<RenderOutcome> {
     if llm {
         let resp = AgentResponse {
-            schema: "opn-agent/1".to_string(),
+            schema: "opn-agent/2".to_string(),
             ok: true,
             ts: agent::current_ts(),
             cmd: "history events".to_string(),
@@ -425,6 +426,7 @@ fn print_events(events: Vec<HistoryEvent>, as_json: bool, llm: bool) -> Result<R
             data: Some(serde_json::to_value(&events)?),
             hints: vec![],
             warnings: vec![],
+            next_steps: vec![],
             actions: agent::build_actions(false),
         };
         agent::print_agent_response(&resp);
@@ -467,7 +469,7 @@ fn render_message(
 ) -> Result<RenderOutcome> {
     if llm {
         let resp = AgentResponse {
-            schema: "opn-agent/1".to_string(),
+            schema: "opn-agent/2".to_string(),
             ok: true,
             ts: agent::current_ts(),
             cmd: "history".to_string(),
@@ -475,6 +477,7 @@ fn render_message(
             data: Some(payload),
             hints: vec![],
             warnings: vec![],
+            next_steps: vec![],
             actions: agent::build_actions(false),
         };
         agent::print_agent_response(&resp);

@@ -194,7 +194,95 @@ pub struct AgentResponse {
     pub hints: Vec<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub warnings: Vec<String>,
+    /// Pre-filled, ready-to-run follow-up commands derived from this result.
+    /// Only populated when context is available (e.g. port, pid, sockets queries).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub next_steps: Vec<String>,
     pub actions: serde_json::Value,
+}
+
+// ── Context-aware next-step suggestions ────────────────────────────────────
+
+pub struct ActionContext<'a> {
+    /// First word of the command that was run (e.g. "port", "sockets", "pid").
+    pub command: &'a str,
+    /// Unique PIDs present in the result set.
+    pub pids: Vec<u32>,
+    /// Ports relevant to the query (e.g. the port that was queried).
+    pub ports: Vec<u16>,
+}
+
+/// Build a short list of pre-filled follow-up commands based on what was found.
+pub fn build_next_steps(allow_write: bool, ctx: &ActionContext<'_>) -> Vec<String> {
+    let mut steps: Vec<String> = Vec::new();
+    match ctx.command {
+        "port" => {
+            for pid in ctx.pids.iter().take(3) {
+                steps.push(format!("opn --llm pid {pid}"));
+            }
+            if let Some(port) = ctx.ports.first() {
+                steps.push(format!("opn --llm capture --port {port}"));
+            }
+            steps.push("opn --llm resources".into());
+            steps.push("opn --llm logs".into());
+            if allow_write {
+                if let Some(port) = ctx.ports.first() {
+                    steps.push(format!("opn --llm --allow-write kill-port {port}"));
+                }
+            }
+        }
+        "pid" => {
+            steps.push("opn --llm resources".into());
+            steps.push("opn --llm logs".into());
+            steps.push("opn --llm sockets".into());
+        }
+        "file" => {
+            for pid in ctx.pids.iter().take(3) {
+                steps.push(format!("opn --llm pid {pid}"));
+            }
+            steps.push("opn --llm deleted".into());
+            steps.push("opn --llm resources".into());
+        }
+        "deleted" => {
+            for pid in ctx.pids.iter().take(3) {
+                steps.push(format!("opn --llm pid {pid}"));
+            }
+            steps.push("opn --llm resources".into());
+        }
+        "sockets" => {
+            steps.push("opn --llm diagnose".into());
+            steps.push("opn --llm resources".into());
+            steps.push("opn --llm snapshot".into());
+        }
+        "diagnose" => {
+            steps.push("opn --llm snapshot".into());
+            steps.push("opn --llm resources".into());
+            steps.push("opn --llm logs".into());
+        }
+        "bandwidth" => {
+            steps.push("opn --llm interfaces".into());
+            steps.push("opn --llm capture".into());
+            steps.push("opn --llm sockets".into());
+        }
+        "interfaces" => {
+            steps.push("opn --llm bandwidth".into());
+            steps.push("opn --llm netconfig".into());
+        }
+        "resources" => {
+            steps.push("opn --llm diagnose".into());
+            steps.push("opn --llm logs".into());
+        }
+        "logs" => {
+            steps.push("opn --llm diagnose".into());
+            steps.push("opn --llm sockets".into());
+        }
+        "capture" => {
+            steps.push("opn --llm sockets".into());
+            steps.push("opn --llm diagnose".into());
+        }
+        _ => {}
+    }
+    steps
 }
 
 // ── Snapshot types ─────────────────────────────────────────────────────────

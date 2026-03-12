@@ -19,8 +19,8 @@ use serde::Serialize;
 use std::process::ExitCode;
 
 use agent::{
-    build_actions, caps, current_ts, detect_anomalies, file_to_agent, print_agent_response,
-    socket_to_agent, AgentResponse,
+    build_actions, build_next_steps, caps, current_ts, detect_anomalies, file_to_agent,
+    print_agent_response, socket_to_agent, ActionContext, AgentResponse,
 };
 use cli::{Cli, Command, HistoryAction};
 use model::{KillSignal, OpenFile, QueryFilter, SocketEntry};
@@ -45,8 +45,28 @@ fn render_sockets_llm(
         })
         .collect();
     let hints = detect_anomalies(&agent_sockets, &[]);
+    let cmd_word = cmd.split_whitespace().next().unwrap_or("sockets");
+    let pids: Vec<u32> = {
+        let mut seen = std::collections::HashSet::new();
+        agent_sockets
+            .iter()
+            .filter(|s| seen.insert(s.pid))
+            .map(|s| s.pid)
+            .collect()
+    };
+    let ports: Vec<u16> = cmd
+        .split_whitespace()
+        .nth(1)
+        .and_then(|p| p.parse().ok())
+        .into_iter()
+        .collect();
+    let ctx = ActionContext {
+        command: cmd_word,
+        pids,
+        ports,
+    };
     let resp = AgentResponse {
-        schema: "opn-agent/1".to_string(),
+        schema: "opn-agent/2".to_string(),
         ok: true,
         ts: current_ts(),
         cmd: cmd.to_string(),
@@ -54,6 +74,7 @@ fn render_sockets_llm(
         data: Some(serde_json::to_value(&agent_sockets).unwrap_or_default()),
         hints,
         warnings: vec![],
+        next_steps: build_next_steps(allow_write, &ctx),
         actions: build_actions(allow_write),
     };
     print_agent_response(&resp);
@@ -71,8 +92,22 @@ fn render_files_llm(
 ) -> anyhow::Result<RenderOutcome> {
     let agent_files: Vec<_> = files.iter().map(file_to_agent).collect();
     let hints = detect_anomalies(&[], &agent_files);
+    let cmd_word = cmd.split_whitespace().next().unwrap_or("file");
+    let pids: Vec<u32> = {
+        let mut seen = std::collections::HashSet::new();
+        agent_files
+            .iter()
+            .filter(|f| seen.insert(f.pid))
+            .map(|f| f.pid)
+            .collect()
+    };
+    let ctx = ActionContext {
+        command: cmd_word,
+        pids,
+        ports: vec![],
+    };
     let resp = AgentResponse {
-        schema: "opn-agent/1".to_string(),
+        schema: "opn-agent/2".to_string(),
         ok: true,
         ts: current_ts(),
         cmd: cmd.to_string(),
@@ -80,6 +115,7 @@ fn render_files_llm(
         data: Some(serde_json::to_value(&agent_files).unwrap_or_default()),
         hints,
         warnings: vec![],
+        next_steps: build_next_steps(allow_write, &ctx),
         actions: build_actions(allow_write),
     };
     print_agent_response(&resp);
@@ -170,7 +206,7 @@ fn command_label(command: &Command) -> String {
 fn print_llm_error(command: &Command, allow_write: bool, message: &str) {
     let err = classify_error(message);
     let payload = serde_json::json!({
-        "schema": "opn-agent/1",
+        "schema": "opn-agent/2",
         "ok": false,
         "ts": current_ts(),
         "cmd": command_label(command),
