@@ -86,7 +86,7 @@ pub fn run(
                 hints: vec![String::from("No interfaces found")],
                 warnings: vec![],
                 next_steps: vec![],
-            actions: agent::build_actions(allow_write),
+                actions: agent::build_actions(allow_write),
             };
             agent::print_agent_response(&resp);
         } else {

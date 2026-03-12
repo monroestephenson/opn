@@ -64,7 +64,7 @@ pub fn run_kill_port(
                 hints: vec![format!("No processes found on port {}", port)],
                 warnings: vec![],
                 next_steps: vec![],
-            actions: agent::build_actions(allow_write),
+                actions: agent::build_actions(allow_write),
             };
             agent::print_agent_response(&resp);
         } else {

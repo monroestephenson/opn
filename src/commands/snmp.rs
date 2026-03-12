@@ -19,7 +19,7 @@ pub fn run(platform: &dyn Platform, llm: bool, allow_write: bool) -> Result<Rend
                 hints: vec![],
                 warnings: vec![],
                 next_steps: vec![],
-            actions: agent::build_actions(allow_write),
+                actions: agent::build_actions(allow_write),
             };
             agent::print_agent_response(&resp);
         } else {
@@ -46,7 +46,7 @@ pub fn run(platform: &dyn Platform, llm: bool, allow_write: bool) -> Result<Rend
                 hints: vec![msg.to_string()],
                 warnings: vec![],
                 next_steps: vec![],
-            actions: agent::build_actions(allow_write),
+                actions: agent::build_actions(allow_write),
             };
             agent::print_agent_response(&resp);
         } else {

@@ -60,7 +60,11 @@ fn render_sockets_llm(
         .and_then(|p| p.parse().ok())
         .into_iter()
         .collect();
-    let ctx = ActionContext { command: cmd_word, pids, ports };
+    let ctx = ActionContext {
+        command: cmd_word,
+        pids,
+        ports,
+    };
     let resp = AgentResponse {
         schema: "opn-agent/2".to_string(),
         ok: true,
@@ -97,7 +101,11 @@ fn render_files_llm(
             .map(|f| f.pid)
             .collect()
     };
-    let ctx = ActionContext { command: cmd_word, pids, ports: vec![] };
+    let ctx = ActionContext {
+        command: cmd_word,
+        pids,
+        ports: vec![],
+    };
     let resp = AgentResponse {
         schema: "opn-agent/2".to_string(),
         ok: true,
