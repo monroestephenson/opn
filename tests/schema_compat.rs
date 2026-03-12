@@ -1,7 +1,7 @@
-//! Schema compatibility tests for v1 JSON contracts of the `opn` tool.
+//! Schema compatibility tests for v2 JSON contracts of the `opn` tool.
 //!
 //! These tests validate that the JSON output from `opn` conforms to the
-//! documented v1 schema. Since this is an integration test file, we cannot
+//! documented v2 schema. Since this is an integration test file, we cannot
 //! import internal types directly. Instead we validate JSON structure using
 //! `serde_json::Value` and by invoking the binary.
 
@@ -9,8 +9,8 @@ use std::process::Command;
 
 use serde_json::Value;
 
-/// The v1 schema version these tests validate against.
-const SCHEMA_VERSION: &str = "1.0";
+/// The v2 schema version these tests validate against.
+const SCHEMA_VERSION: &str = "2.0";
 
 // ============================================================
 // Helpers
@@ -202,8 +202,8 @@ fn assert_valid_error_response(val: &Value) {
 // ============================================================
 
 #[test]
-fn schema_version_is_v1() {
-    assert_eq!(SCHEMA_VERSION, "1.0");
+fn schema_version_is_v2() {
+    assert_eq!(SCHEMA_VERSION, "2.0");
 }
 
 // ============================================================
