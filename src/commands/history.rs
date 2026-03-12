@@ -304,12 +304,18 @@ fn run_record(platform: &dyn Platform, opts: RecordOptions<'_>) -> Result<Render
             } else {
                 Vec::new()
             };
-            let current = collect_agent_sockets(platform, opts.filter)?;
             let previous = read_state(&data_dir)?.unwrap_or_else(empty_state);
-            let events = if live_wait && !live_events.is_empty() {
-                live_activity_to_history_events(platform, &live_events, opts.filter)
+            let (current, events) = if live_wait && !live_events.is_empty() {
+                // Live eBPF path: skip the procfs snapshot and use live events directly.
+                // Carry previous sockets forward as the current state so the next
+                // diff_state fallback iteration has a valid baseline.
+                let events =
+                    live_activity_to_history_events(platform, &live_events, opts.filter);
+                (previous.sockets.clone(), events)
             } else {
-                diff_state(previous.sockets, current.clone(), now)
+                let current = collect_agent_sockets(platform, opts.filter)?;
+                let events = diff_state(previous.sockets, current.clone(), now);
+                (current, events)
             };
             append_events(&data_dir.join(EVENTS_FILE), &events, opts.capacity)?;
             write_state(
@@ -732,6 +738,9 @@ fn live_activity_to_history_event(
             (EventKind::Connect, None, Some(String::from("ESTABLISHED")))
         }
         LiveSocketActivityKind::Close => (
+            // TODO: previous_state should come from the eBPF flow table (could be
+            // LISTEN, SYN_SENT, TIME_WAIT, etc.); ESTABLISHED is a best-effort default
+            // until the eBPF event carries prior state.
             EventKind::Close,
             Some(String::from("ESTABLISHED")),
             Some(String::from("CLOSED")),

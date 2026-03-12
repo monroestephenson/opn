@@ -1,5 +1,3 @@
-#![allow(dead_code)]
-
 use std::collections::{hash_map::Entry, HashMap};
 use std::convert::TryInto;
 use std::mem::size_of;
@@ -229,6 +227,7 @@ impl EbpfCollector {
                 return Ok(total);
             }
             if !readable {
+                // TODO: replace with epoll on perf buffer fds to avoid busy-polling
                 std::thread::sleep(Duration::from_millis(25));
             }
         }
@@ -420,17 +419,18 @@ fn decode_socket_event(bytes: &[u8]) -> Option<EbpfSocketEvent> {
     }
 
     let raw = unsafe { std::ptr::read_unaligned(bytes.as_ptr() as *const SocketEvent) };
+    let kind = match raw.kind {
+        x if x == EventKind::Listen as u8 => EbpfSocketEventKind::Listen,
+        x if x == EventKind::Accept as u8 => EbpfSocketEventKind::Accept,
+        x if x == EventKind::Connect as u8 => EbpfSocketEventKind::Connect,
+        x if x == EventKind::Close as u8 => EbpfSocketEventKind::Close,
+        x if x == EventKind::StateChange as u8 => EbpfSocketEventKind::StateChange,
+        x if x == EventKind::Retransmit as u8 => EbpfSocketEventKind::Retransmit,
+        _ => return None,
+    };
     Some(EbpfSocketEvent {
         ts_ns: raw.ts_ns,
-        kind: match raw.kind {
-            x if x == EventKind::Listen as u8 => EbpfSocketEventKind::Listen,
-            x if x == EventKind::Accept as u8 => EbpfSocketEventKind::Accept,
-            x if x == EventKind::Connect as u8 => EbpfSocketEventKind::Connect,
-            x if x == EventKind::Close as u8 => EbpfSocketEventKind::Close,
-            x if x == EventKind::StateChange as u8 => EbpfSocketEventKind::StateChange,
-            x if x == EventKind::Retransmit as u8 => EbpfSocketEventKind::Retransmit,
-            _ => EbpfSocketEventKind::StateChange,
-        },
+        kind,
         key: EbpfSocketKey {
             pid: raw.pid,
             protocol: protocol_name(raw.protocol).to_string(),
@@ -495,18 +495,21 @@ fn decode_comm(comm_words: [u32; 4]) -> String {
 }
 
 fn format_addr(family: u8, raw: [u32; 4], port: u16) -> String {
+    // Kernel stores IP addresses in network byte order (big-endian). On a little-endian
+    // host, bpf_probe_read_kernel returns the raw bytes as a native u32, so we must use
+    // to_ne_bytes() to recover the original big-endian byte sequence.
     match family as i32 {
         libc::AF_INET => {
-            let bytes = raw[0].to_be_bytes();
+            let bytes = raw[0].to_ne_bytes();
             let ip = std::net::Ipv4Addr::new(bytes[0], bytes[1], bytes[2], bytes[3]);
             format!("{ip}:{port}")
         }
         libc::AF_INET6 => {
             let mut bytes = [0u8; 16];
-            bytes[0..4].copy_from_slice(&raw[0].to_be_bytes());
-            bytes[4..8].copy_from_slice(&raw[1].to_be_bytes());
-            bytes[8..12].copy_from_slice(&raw[2].to_be_bytes());
-            bytes[12..16].copy_from_slice(&raw[3].to_be_bytes());
+            bytes[0..4].copy_from_slice(&raw[0].to_ne_bytes());
+            bytes[4..8].copy_from_slice(&raw[1].to_ne_bytes());
+            bytes[8..12].copy_from_slice(&raw[2].to_ne_bytes());
+            bytes[12..16].copy_from_slice(&raw[3].to_ne_bytes());
             let ip = std::net::Ipv6Addr::from(bytes);
             format!("[{ip}]:{port}")
         }

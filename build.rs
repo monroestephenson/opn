@@ -52,16 +52,15 @@ fn discover_ebpf_object(repo_root: &Path) -> Option<PathBuf> {
 fn write_bundle_source(path: &Path, source: Option<&Path>) {
     let content = match source.and_then(|source| fs::read(source).ok()) {
         Some(bytes) => {
-            let bytes = bytes
+            let len = bytes.len();
+            let byte_str = bytes
                 .iter()
                 .map(|byte| byte.to_string())
                 .collect::<Vec<_>>()
                 .join(", ");
             format!(
-                "pub static BUNDLED_EBPF_BYTES: [u8; {len}] = [{bytes}];\n\
+                "pub static BUNDLED_EBPF_BYTES: [u8; {len}] = [{byte_str}];\n\
                  pub const BUNDLED_EBPF_OBJECT: Option<&'static [u8]> = Some(&BUNDLED_EBPF_BYTES);\n",
-                len = bytes.split(", ").count(),
-                bytes = bytes
             )
         }
         None => String::from("pub const BUNDLED_EBPF_OBJECT: Option<&'static [u8]> = None;\n"),

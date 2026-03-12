@@ -4,7 +4,7 @@
 use core::{mem::MaybeUninit, ptr};
 
 use aya_ebpf::{
-    helpers::{bpf_get_current_pid_tgid, bpf_ktime_get_ns, bpf_probe_read_kernel},
+    helpers::{bpf_get_current_comm, bpf_get_current_pid_tgid, bpf_ktime_get_ns, bpf_probe_read_kernel},
     macros::{kprobe, map},
     maps::PerfEventArray,
     programs::ProbeContext,
@@ -78,10 +78,31 @@ fn emit_event(ctx: &ProbeContext, kind: EventKind, sock_ptr: Option<*const bpf_s
         ptr::addr_of_mut!((*event_ptr).pid).write((bpf_get_current_pid_tgid() >> 32) as u32);
         ptr::addr_of_mut!((*event_ptr).kind).write(kind as u8);
         ptr::addr_of_mut!((*event_ptr)._reserved).write(0);
-        ptr::addr_of_mut!((*event_ptr).comm_0).write(u32::from_ne_bytes(*b"opn\0"));
-        ptr::addr_of_mut!((*event_ptr).comm_1).write(u32::from_ne_bytes(*b"ebpf"));
-        ptr::addr_of_mut!((*event_ptr).comm_2).write(u32::from_ne_bytes(*b"v100"));
-        ptr::addr_of_mut!((*event_ptr).comm_3).write(u32::from_ne_bytes(*b"0001"));
+        let comm_bytes = bpf_get_current_comm().unwrap_or([0u8; 16]);
+        ptr::addr_of_mut!((*event_ptr).comm_0).write(u32::from_ne_bytes([
+            comm_bytes[0],
+            comm_bytes[1],
+            comm_bytes[2],
+            comm_bytes[3],
+        ]));
+        ptr::addr_of_mut!((*event_ptr).comm_1).write(u32::from_ne_bytes([
+            comm_bytes[4],
+            comm_bytes[5],
+            comm_bytes[6],
+            comm_bytes[7],
+        ]));
+        ptr::addr_of_mut!((*event_ptr).comm_2).write(u32::from_ne_bytes([
+            comm_bytes[8],
+            comm_bytes[9],
+            comm_bytes[10],
+            comm_bytes[11],
+        ]));
+        ptr::addr_of_mut!((*event_ptr).comm_3).write(u32::from_ne_bytes([
+            comm_bytes[12],
+            comm_bytes[13],
+            comm_bytes[14],
+            comm_bytes[15],
+        ]));
     }
 
     let mut event = unsafe { event.assume_init() };
@@ -100,7 +121,7 @@ fn emit_event(ctx: &ProbeContext, kind: EventKind, sock_ptr: Option<*const bpf_s
 #[inline(always)]
 fn fill_socket_fields(sock_ptr: *const bpf_sock, event: &mut SocketEvent) -> Result<(), i64> {
     if sock_ptr.is_null() {
-        return Ok(());
+        return Err(-1);
     }
 
     let family = unsafe { read_u32(ptr::addr_of!((*sock_ptr).family)) };

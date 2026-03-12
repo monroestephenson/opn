@@ -30,7 +30,14 @@
       "Bash(ls:*)",
       "Bash(xcrun --show-sdk-path)",
       "Bash(ssh -V)",
-      "Bash(/usr/sbin/sshd -V)"
+      "Bash(/usr/sbin/sshd -V)",
+      "Bash(gh pr:*)",
+      "Bash(cargo check:*)",
+      "Bash(cargo +nightly check --manifest-path ebpf/Cargo.toml --target bpfel-unknown-none 2>&1 | head -30)",
+      "Bash(rustup show:*)",
+      "Bash(rustup toolchain:*)",
+      "Bash(~/.cargo/bin/cargo check:*)",
+      "Bash(which cargo:*)"
     ]
   }
 }

@@ -43,12 +43,16 @@ pub trait Platform: Send + Sync {
         false
     }
     fn backend_status(&self) -> Result<BackendStatus> {
+        #[cfg(unix)]
+        let running_as_root = unsafe { libc::geteuid() == 0 };
+        #[cfg(not(unix))]
+        let running_as_root = false;
         Ok(BackendStatus {
             backend: self.socket_backend_label().to_string(),
             ready: true,
             supports_live_socket_activity: self.supports_live_socket_activity(),
             strict_live_mode: self.strict_live_socket_mode(),
-            running_as_root: unsafe { libc::geteuid() == 0 },
+            running_as_root,
             object_path: None,
             interface: None,
             tracked_flow_count: self.list_live_socket_snapshots()?.len(),
