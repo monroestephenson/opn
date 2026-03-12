@@ -78,7 +78,7 @@ pub fn run_diff(
 
     if llm {
         let resp = AgentResponse {
-            schema: String::from("opn-agent/1"),
+            schema: String::from("opn-agent/2"),
             ok: true,
             ts: agent::current_ts(),
             cmd: format!("diff {}", snapshot_path.display()),
@@ -86,6 +86,7 @@ pub fn run_diff(
             data: Some(diff),
             hints: vec![],
             warnings: vec![],
+            next_steps: vec![],
             actions: agent::build_actions(false),
         };
         agent::print_agent_response(&resp);

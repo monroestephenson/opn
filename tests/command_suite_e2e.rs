@@ -28,7 +28,7 @@ fn parse_json_stdout(output: &Output) -> Value {
 
 fn parse_llm_stdout(output: &Output) -> Value {
     let val = parse_json_stdout(output);
-    assert_eq!(val["schema"], "opn-agent/1", "invalid llm envelope: {val}");
+    assert_eq!(val["schema"], "opn-agent/2", "invalid llm envelope: {val}");
     assert!(val["ok"].is_boolean(), "missing ok field: {val}");
     assert!(val["ts"].is_number(), "missing ts field: {val}");
     assert!(val["cmd"].is_string(), "missing cmd field: {val}");

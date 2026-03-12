@@ -404,7 +404,7 @@ pub fn run(action: &FirewallAction, llm: bool, allow_write: bool) -> Result<Rend
         Ok(msg) => {
             if llm {
                 let resp = AgentResponse {
-                    schema: String::from("opn-agent/1"),
+                    schema: String::from("opn-agent/2"),
                     ok: true,
                     ts: agent::current_ts(),
                     cmd: String::from("firewall"),
@@ -412,6 +412,7 @@ pub fn run(action: &FirewallAction, llm: bool, allow_write: bool) -> Result<Rend
                     data: Some(serde_json::json!({ "message": msg })),
                     hints: vec![],
                     warnings: vec![],
+                    next_steps: vec![],
                     actions: agent::build_actions(allow_write),
                 };
                 agent::print_agent_response(&resp);
@@ -423,7 +424,7 @@ pub fn run(action: &FirewallAction, llm: bool, allow_write: bool) -> Result<Rend
         Err(e) => {
             if llm {
                 let resp = AgentResponse {
-                    schema: String::from("opn-agent/1"),
+                    schema: String::from("opn-agent/2"),
                     ok: false,
                     ts: agent::current_ts(),
                     cmd: String::from("firewall"),
@@ -431,6 +432,7 @@ pub fn run(action: &FirewallAction, llm: bool, allow_write: bool) -> Result<Rend
                     data: None,
                     hints: vec![],
                     warnings: vec![e.to_string()],
+                    next_steps: vec![],
                     actions: agent::build_actions(allow_write),
                 };
                 agent::print_agent_response(&resp);

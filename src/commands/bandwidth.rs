@@ -77,7 +77,7 @@ pub fn run(
     if rates.is_empty() {
         if llm {
             let resp = AgentResponse {
-                schema: String::from("opn-agent/1"),
+                schema: String::from("opn-agent/2"),
                 ok: true,
                 ts: agent::current_ts(),
                 cmd: String::from("bandwidth"),
@@ -85,7 +85,8 @@ pub fn run(
                 data: Some(serde_json::json!({"duration_secs": duration_secs, "interfaces": []})),
                 hints: vec![String::from("No interfaces found")],
                 warnings: vec![],
-                actions: agent::build_actions(allow_write),
+                next_steps: vec![],
+            actions: agent::build_actions(allow_write),
             };
             agent::print_agent_response(&resp);
         } else {
@@ -100,7 +101,7 @@ pub fn run(
             "interfaces": rates
         });
         let resp = AgentResponse {
-            schema: String::from("opn-agent/1"),
+            schema: String::from("opn-agent/2"),
             ok: true,
             ts: agent::current_ts(),
             cmd: format!("bandwidth --duration {duration_secs}"),
@@ -108,6 +109,7 @@ pub fn run(
             data: Some(data),
             hints: vec![],
             warnings: vec![],
+            next_steps: vec![],
             actions: agent::build_actions(allow_write),
         };
         agent::print_agent_response(&resp);

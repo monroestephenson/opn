@@ -10,7 +10,7 @@ pub fn run(platform: &dyn Platform, llm: bool, allow_write: bool) -> Result<Rend
     if let Some(m) = metrics {
         if llm {
             let resp = AgentResponse {
-                schema: String::from("opn-agent/1"),
+                schema: String::from("opn-agent/2"),
                 ok: true,
                 ts: agent::current_ts(),
                 cmd: String::from("snmp"),
@@ -18,7 +18,8 @@ pub fn run(platform: &dyn Platform, llm: bool, allow_write: bool) -> Result<Rend
                 data: Some(serde_json::to_value(&m)?),
                 hints: vec![],
                 warnings: vec![],
-                actions: agent::build_actions(allow_write),
+                next_steps: vec![],
+            actions: agent::build_actions(allow_write),
             };
             agent::print_agent_response(&resp);
         } else {
@@ -36,7 +37,7 @@ pub fn run(platform: &dyn Platform, llm: bool, allow_write: bool) -> Result<Rend
         let msg = "TCP metrics not available on this platform";
         if llm {
             let resp = AgentResponse {
-                schema: String::from("opn-agent/1"),
+                schema: String::from("opn-agent/2"),
                 ok: true,
                 ts: agent::current_ts(),
                 cmd: String::from("snmp"),
@@ -44,7 +45,8 @@ pub fn run(platform: &dyn Platform, llm: bool, allow_write: bool) -> Result<Rend
                 data: None,
                 hints: vec![msg.to_string()],
                 warnings: vec![],
-                actions: agent::build_actions(allow_write),
+                next_steps: vec![],
+            actions: agent::build_actions(allow_write),
             };
             agent::print_agent_response(&resp);
         } else {

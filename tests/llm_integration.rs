@@ -37,7 +37,7 @@ fn parse_llm_stdout(output: &Output) -> Value {
 }
 
 fn assert_agent_envelope(val: &Value) {
-    assert_eq!(val["schema"], "opn-agent/1");
+    assert_eq!(val["schema"], "opn-agent/2");
     assert!(val["ok"].is_boolean(), "missing/invalid ok field: {val}");
     assert!(val["ts"].is_number(), "missing/invalid ts field: {val}");
     assert!(val["cmd"].is_string(), "missing/invalid cmd field: {val}");

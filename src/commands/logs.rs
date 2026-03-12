@@ -192,7 +192,7 @@ pub fn run(
         });
 
         let resp = AgentResponse {
-            schema: String::from("opn-agent/1"),
+            schema: String::from("opn-agent/2"),
             ok: true,
             ts: agent::current_ts(),
             cmd: format!("logs --log-type {log_type}"),
@@ -200,6 +200,7 @@ pub fn run(
             data: Some(data),
             hints: vec![],
             warnings: vec![],
+            next_steps: vec![],
             actions: agent::build_actions(allow_write),
         };
         agent::print_agent_response(&resp);
