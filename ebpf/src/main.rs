@@ -4,7 +4,9 @@
 use core::{mem::MaybeUninit, ptr};
 
 use aya_ebpf::{
-    helpers::{bpf_get_current_comm, bpf_get_current_pid_tgid, bpf_ktime_get_ns, bpf_probe_read_kernel},
+    helpers::{
+        bpf_get_current_comm, bpf_get_current_pid_tgid, bpf_ktime_get_ns, bpf_probe_read_kernel,
+    },
     macros::{kprobe, map},
     maps::PerfEventArray,
     programs::ProbeContext,

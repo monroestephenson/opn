@@ -309,8 +309,7 @@ fn run_record(platform: &dyn Platform, opts: RecordOptions<'_>) -> Result<Render
                 // Live eBPF path: skip the procfs snapshot and use live events directly.
                 // Carry previous sockets forward as the current state so the next
                 // diff_state fallback iteration has a valid baseline.
-                let events =
-                    live_activity_to_history_events(platform, &live_events, opts.filter);
+                let events = live_activity_to_history_events(platform, &live_events, opts.filter);
                 (previous.sockets.clone(), events)
             } else {
                 let current = collect_agent_sockets(platform, opts.filter)?;
