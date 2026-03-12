@@ -4,7 +4,11 @@ version = "0.3.1"
 edition = "2021"
 
 [workspace]
-members = [".", "ebpf", "ebpf-common"]
+# ebpf/ is intentionally excluded: it is a no_std kernel crate built separately
+# for bpfel-unknown-none and cannot be compiled by the standard test harness
+# (duplicate panic_impl with std). Build it via:
+#   cargo +nightly build -Z build-std=core --manifest-path ebpf/Cargo.toml --target bpfel-unknown-none
+members = [".", "ebpf-common"]
 default-members = ["."]
 
 [[bin]]
