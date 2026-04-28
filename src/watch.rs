@@ -270,19 +270,15 @@ pub fn run(
                         KeyCode::Char('q') => break Ok(()),
                         KeyCode::Char(' ') => paused = !paused,
                         KeyCode::Char('s') => sort_key = sort_key.next(),
-                        KeyCode::Down | KeyCode::Char('j') => {
-                            if selected + 1 < rows.len() {
-                                selected += 1;
-                            }
+                        KeyCode::Down | KeyCode::Char('j') if selected + 1 < rows.len() => {
+                            selected += 1;
                         }
                         KeyCode::Up | KeyCode::Char('k') => {
                             selected = selected.saturating_sub(1);
                         }
                         KeyCode::Char('g') => selected = 0,
-                        KeyCode::Char('G') => {
-                            if !rows.is_empty() {
-                                selected = rows.len() - 1;
-                            }
+                        KeyCode::Char('G') if !rows.is_empty() => {
+                            selected = rows.len() - 1;
                         }
                         KeyCode::Enter => {
                             if let Some(row) = rows.get(selected) {

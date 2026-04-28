@@ -72,7 +72,7 @@ pub fn run(
         .collect();
 
     // Sort by total rate descending
-    rates.sort_by(|a, b| (b.rx_bps + b.tx_bps).cmp(&(a.rx_bps + a.tx_bps)));
+    rates.sort_by_key(|b| std::cmp::Reverse(b.rx_bps + b.tx_bps));
 
     if rates.is_empty() {
         if llm {
