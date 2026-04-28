@@ -182,7 +182,13 @@ fn command_label(command: &Command) -> String {
     match command {
         Command::Port { port, .. } => format!("port {port}"),
         Command::File { path, .. } => format!("file {path}"),
-        Command::Pid { pid, .. } => format!("pid {pid}"),
+        Command::Pid { pid, tree, .. } => {
+            if *tree {
+                format!("pid {pid} --tree")
+            } else {
+                format!("pid {pid}")
+            }
+        }
         Command::Ancestry { pid } => format!("ancestry {pid}"),
         Command::Deleted { .. } => String::from("deleted"),
         Command::Sockets { .. } => String::from("sockets"),
@@ -322,24 +328,32 @@ fn main() -> ExitCode {
                 commands::file::run(&platform, path, &qf, cli.json)
             }
         }
-        Command::Pid { pid, filter } => {
-            let qf = QueryFilter::from(filter);
-            if cli.llm {
-                (|| -> anyhow::Result<RenderOutcome> {
-                    let known = platform.list_pids(&QueryFilter::default())?;
-                    if !known.contains(pid) {
-                        anyhow::bail!("PID {} not found", pid);
-                    }
-                    let files = platform.list_open_files(*pid)?;
-                    render_files_llm(files, &format!("pid {pid}"), cli.allow_write)
-                })()
+        Command::Pid {
+            pid,
+            filter,
+            tree,
+            depth,
+        } => {
+            if *tree {
+                let qf = QueryFilter::from(filter);
+                commands::pid::run(&platform, *pid, &qf, cli.json, true, *depth)
             } else {
-                commands::pid::run(&platform, *pid, &qf, cli.json)
+                let qf = QueryFilter::from(filter);
+                if cli.llm {
+                    (|| -> anyhow::Result<RenderOutcome> {
+                        let known = platform.list_pids(&QueryFilter::default())?;
+                        if !known.contains(pid) {
+                            anyhow::bail!("PID {} not found", pid);
+                        }
+                        let files = platform.list_open_files(*pid)?;
+                        render_files_llm(files, &format!("pid {pid}"), cli.allow_write)
+                    })()
+                } else {
+                    commands::pid::run(&platform, *pid, &qf, cli.json, false, 10)
+                }
             }
         }
-        Command::Ancestry { pid } => {
-            commands::ancestry::run(&platform, *pid, cli.json)
-        }
+        Command::Ancestry { pid } => commands::ancestry::run(&platform, *pid, cli.json),
         Command::Deleted { filter } => {
             let qf = QueryFilter::from(filter);
             if cli.llm {
@@ -571,6 +585,14 @@ mod tests {
             }),
             command_label(&Command::Pid {
                 pid: 1,
+                tree: false,
+                depth: 10,
+                filter: filter.clone(),
+            }),
+            command_label(&Command::Pid {
+                pid: 1,
+                tree: true,
+                depth: 5,
                 filter: filter.clone(),
             }),
             command_label(&Command::Ancestry { pid: 1 }),

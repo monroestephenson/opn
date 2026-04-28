@@ -3,6 +3,8 @@ use serde::Serialize;
 
 use crate::model::{ProcessAncestor, ProcessInfo};
 use crate::platform::Platform;
+use crate::render;
+use crate::render::tree::TreeNode;
 use crate::render::RenderOutcome;
 
 #[derive(Serialize)]
@@ -13,26 +15,26 @@ struct AncestryResult {
     ancestry: Vec<ProcessAncestor>,
 }
 
-fn format_tree(target: &ProcessInfo, ancestry: &[ProcessAncestor]) -> String {
-    let mut out = String::from("PROCESS TREE\n");
+fn build_ancestry_tree(target: &ProcessInfo, ancestry: &[ProcessAncestor]) -> TreeNode {
     if ancestry.is_empty() {
-        out.push_str(&format!("  {} ({})\n", target.name, target.pid));
-        return out;
+        return TreeNode {
+            label: format!("{} ({})", target.name, target.pid),
+            children: vec![],
+        };
     }
-    // Root ancestor — no connector
-    out.push_str(&format!("  {} ({})\n", ancestry[0].name, ancestry[0].pid));
-    // Remaining ancestors — connector at parent depth
-    for (i, ancestor) in ancestry.iter().enumerate().skip(1) {
-        let indent = "  ".repeat(i);
-        out.push_str(&format!("  {}└─ {} ({})\n", indent, ancestor.name, ancestor.pid));
+    // Build chain from root-most ancestor down to target.
+    // target is the deepest node, marked with ←.
+    let mut node = TreeNode {
+        label: format!("{} ({}) ←", target.name, target.pid),
+        children: vec![],
+    };
+    for ancestor in ancestry.iter().rev() {
+        node = TreeNode {
+            label: format!("{} ({})", ancestor.name, ancestor.pid),
+            children: vec![node],
+        };
     }
-    // Target process — connector at last ancestor's depth
-    let indent = "  ".repeat(ancestry.len());
-    out.push_str(&format!(
-        "  {}└─ {} ({}) ←\n",
-        indent, target.name, target.pid
-    ));
-    out
+    node
 }
 
 pub fn run(platform: &dyn Platform, pid: u32, json: bool) -> Result<RenderOutcome> {
@@ -49,7 +51,8 @@ pub fn run(platform: &dyn Platform, pid: u32, json: bool) -> Result<RenderOutcom
         };
         println!("{}", serde_json::to_string_pretty(&result)?);
     } else {
-        print!("{}", format_tree(&target, &ancestry));
+        let root = build_ancestry_tree(&target, &ancestry);
+        print!("PROCESS TREE\n{}", render::tree::render_tree(&root));
     }
 
     Ok(RenderOutcome::HasResults)
@@ -100,25 +103,19 @@ mod tests {
     }
 
     #[test]
-    fn test_format_tree_with_ancestry() {
+    fn test_build_ancestry_tree_with_chain() {
         let target = proc_info(999, "nginx");
         let chain = vec![ancestor(1, "launchd"), ancestor(50, "sshd")];
-        let tree = format_tree(&target, &chain);
-        assert!(tree.contains("PROCESS TREE"));
-        assert!(tree.contains("launchd"));
-        assert!(tree.contains("sshd"));
-        assert!(tree.contains("nginx"));
-        assert!(tree.contains("└─"));
-        assert!(tree.contains("←"));
+        let root = build_ancestry_tree(&target, &chain);
+        let out = render::tree::render_tree(&root);
+        assert_eq!(out, "  launchd (1)\n  └─ sshd (50)\n    └─ nginx (999) ←\n");
     }
 
     #[test]
-    fn test_format_tree_no_ancestry() {
+    fn test_build_ancestry_tree_no_ancestry() {
         let target = proc_info(1, "launchd");
-        let tree = format_tree(&target, &[]);
-        assert!(tree.contains("PROCESS TREE"));
-        assert!(tree.contains("launchd"));
-        assert!(!tree.contains("└─"));
-        assert!(!tree.contains("←"));
+        let root = build_ancestry_tree(&target, &[]);
+        let out = render::tree::render_tree(&root);
+        assert_eq!(out, "  launchd (1)\n");
     }
 }

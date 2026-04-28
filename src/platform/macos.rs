@@ -780,6 +780,25 @@ impl Platform for MacOsPlatform {
         Ok(ancestors)
     }
 
+    fn process_table(&self) -> Result<Vec<ProcessTableRow>> {
+        use libproc::bsd_info::BSDInfo;
+        use libproc::proc_pid;
+        use libproc::processes::{pids_by_type, ProcFilter};
+        let all_pids = pids_by_type(ProcFilter::All).context("Failed to enumerate processes")?;
+        let mut rows = Vec::new();
+        for &p in &all_pids {
+            let (ppid, name) = match proc_pid::pidinfo::<BSDInfo>(p as i32, 0) {
+                Ok(info) => (
+                    info.pbi_ppid,
+                    proc_pid::name(p as i32).unwrap_or_else(|_| String::from("<unknown>")),
+                ),
+                Err(_) => continue,
+            };
+            rows.push(ProcessTableRow { pid: p, ppid, name });
+        }
+        Ok(rows)
+    }
+
     fn interface_stats(&self) -> Result<Vec<InterfaceStats>> {
         let mut results = Vec::new();
         let mut seen = HashSet::new();

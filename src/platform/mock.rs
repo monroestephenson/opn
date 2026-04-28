@@ -15,6 +15,7 @@ pub struct MockPlatform {
     pids: Vec<u32>,
     sockets: Vec<SocketEntry>,
     files: Vec<OpenFile>,
+    process_table: Vec<ProcessTableRow>,
 }
 
 impl MockPlatform {
@@ -23,6 +24,7 @@ impl MockPlatform {
             pids: vec![],
             sockets: vec![],
             files: vec![],
+            process_table: vec![],
         }
     }
 
@@ -31,6 +33,7 @@ impl MockPlatform {
             pids,
             sockets: vec![],
             files: vec![],
+            process_table: vec![],
         }
     }
 
@@ -40,6 +43,7 @@ impl MockPlatform {
             pids,
             sockets,
             files: vec![],
+            process_table: vec![],
         }
     }
 
@@ -49,6 +53,17 @@ impl MockPlatform {
             pids,
             sockets: vec![],
             files,
+            process_table: vec![],
+        }
+    }
+
+    pub fn with_process_table(rows: Vec<ProcessTableRow>) -> Self {
+        let pids: Vec<u32> = rows.iter().map(|r| r.pid).collect();
+        MockPlatform {
+            pids,
+            sockets: vec![],
+            files: vec![],
+            process_table: rows,
         }
     }
 }
@@ -143,6 +158,10 @@ impl Platform for MockPlatform {
 
     fn process_ancestry(&self, _pid: u32) -> Result<Vec<ProcessAncestor>> {
         Ok(vec![])
+    }
+
+    fn process_table(&self) -> Result<Vec<ProcessTableRow>> {
+        Ok(self.process_table.clone())
     }
 
     fn interface_stats(&self) -> Result<Vec<InterfaceStats>> {

@@ -521,6 +521,39 @@ impl Platform for LinuxPlatform {
         Ok(ancestors)
     }
 
+    fn process_table(&self) -> Result<Vec<ProcessTableRow>> {
+        let mut rows = Vec::new();
+        for entry in fs::read_dir("/proc").context("Failed to read /proc")? {
+            let entry = match entry {
+                Ok(e) => e,
+                Err(_) => continue,
+            };
+            let pid: u32 = match entry.file_name().to_str().and_then(|s| s.parse().ok()) {
+                Some(p) => p,
+                None => continue,
+            };
+            let status_path = format!("/proc/{}/status", pid);
+            let status = match fs::read_to_string(&status_path) {
+                Ok(s) => s,
+                Err(_) => continue,
+            };
+            let ppid: u32 = status
+                .lines()
+                .find(|l| l.starts_with("PPid:"))
+                .and_then(|l| l.split_whitespace().nth(1))
+                .and_then(|s| s.parse().ok())
+                .unwrap_or(0);
+            let name = status
+                .lines()
+                .find(|l| l.starts_with("Name:"))
+                .and_then(|l| l.split_whitespace().nth(1))
+                .unwrap_or("<unknown>")
+                .to_string();
+            rows.push(ProcessTableRow { pid, ppid, name });
+        }
+        Ok(rows)
+    }
+
     fn interface_stats(&self) -> Result<Vec<InterfaceStats>> {
         let content =
             fs::read_to_string("/proc/net/dev").context("Failed to read /proc/net/dev")?;

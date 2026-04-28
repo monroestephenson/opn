@@ -99,6 +99,13 @@ pub struct ProcessAncestor {
     pub name: String,
 }
 
+#[derive(Debug, Clone)]
+pub struct ProcessTableRow {
+    pub pid: u32,
+    pub ppid: u32,
+    pub name: String,
+}
+
 #[derive(Debug, Clone, Copy)]
 pub enum KillSignal {
     Term,

@@ -75,6 +75,14 @@ pub enum Command {
         /// Process ID to inspect.
         pid: u32,
 
+        /// Show descendant tree (children, grandchildren, ...) instead of file descriptors.
+        #[arg(long)]
+        tree: bool,
+
+        /// Maximum tree depth (only with --tree, 1–50).
+        #[arg(long, default_value = "10")]
+        depth: usize,
+
         #[command(flatten)]
         filter: FilterArgs,
     },
@@ -739,6 +747,33 @@ mod tests {
         match cli.command {
             Command::Pid { pid, .. } => assert_eq!(pid, 1234),
             _ => panic!("Expected Pid command"),
+        }
+    }
+
+    #[test]
+    fn test_cli_parse_pid_tree() {
+        let cli = Cli::try_parse_from(["opn", "pid", "42", "--tree"]).unwrap();
+        match cli.command {
+            Command::Pid { pid, tree, .. } => {
+                assert_eq!(pid, 42);
+                assert!(tree);
+            }
+            _ => panic!("Expected Pid command with --tree"),
+        }
+    }
+
+    #[test]
+    fn test_cli_parse_pid_tree_with_depth() {
+        let cli = Cli::try_parse_from(["opn", "pid", "42", "--tree", "--depth", "5"]).unwrap();
+        match cli.command {
+            Command::Pid {
+                pid, tree, depth, ..
+            } => {
+                assert_eq!(pid, 42);
+                assert!(tree);
+                assert_eq!(depth, 5);
+            }
+            _ => panic!("Expected Pid command with --tree --depth"),
         }
     }
 

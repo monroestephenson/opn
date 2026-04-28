@@ -2,7 +2,7 @@ use anyhow::Result;
 
 use crate::model::{
     InterfaceStats, KillSignal, NetConfig, OpenFile, ProcessAncestor, ProcessInfo,
-    ProcessResources, QueryFilter, SocketEntry, TcpMetrics,
+    ProcessResources, ProcessTableRow, QueryFilter, SocketEntry, TcpMetrics,
 };
 
 pub trait Platform: Send + Sync {
@@ -14,6 +14,7 @@ pub trait Platform: Send + Sync {
     fn list_sockets(&self, filter: &QueryFilter) -> Result<Vec<SocketEntry>>;
     fn find_deleted(&self, filter: &QueryFilter) -> Result<Vec<OpenFile>>;
     fn process_ancestry(&self, pid: u32) -> Result<Vec<ProcessAncestor>>;
+    fn process_table(&self) -> Result<Vec<ProcessTableRow>>;
     fn interface_stats(&self) -> Result<Vec<InterfaceStats>>;
     fn tcp_metrics(&self) -> Result<Option<TcpMetrics>>;
     fn kill_process(&self, pid: u32, signal: KillSignal) -> Result<()>;
