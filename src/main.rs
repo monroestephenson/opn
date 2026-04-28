@@ -183,6 +183,7 @@ fn command_label(command: &Command) -> String {
         Command::Port { port, .. } => format!("port {port}"),
         Command::File { path, .. } => format!("file {path}"),
         Command::Pid { pid, .. } => format!("pid {pid}"),
+        Command::Ancestry { pid } => format!("ancestry {pid}"),
         Command::Deleted { .. } => String::from("deleted"),
         Command::Sockets { .. } => String::from("sockets"),
         Command::Watch { .. } => String::from("watch"),
@@ -250,6 +251,7 @@ fn has_all_flag(cli: &Cli) -> bool {
         Command::Resources { filter } => filter.all,
         // These commands don't have filter args
         Command::Kill { .. }
+        | Command::Ancestry { .. }
         | Command::Interfaces
         | Command::Snmp
         | Command::Firewall { .. }
@@ -334,6 +336,9 @@ fn main() -> ExitCode {
             } else {
                 commands::pid::run(&platform, *pid, &qf, cli.json)
             }
+        }
+        Command::Ancestry { pid } => {
+            commands::ancestry::run(&platform, *pid, cli.json)
         }
         Command::Deleted { filter } => {
             let qf = QueryFilter::from(filter);
@@ -568,6 +573,7 @@ mod tests {
                 pid: 1,
                 filter: filter.clone(),
             }),
+            command_label(&Command::Ancestry { pid: 1 }),
             command_label(&Command::Deleted {
                 filter: filter.clone(),
             }),
@@ -635,5 +641,6 @@ mod tests {
         assert!(labels.contains(&"capture".to_string()));
         assert!(labels.contains(&"kill 123".to_string()));
         assert!(labels.contains(&"port 80".to_string()));
+        assert!(labels.contains(&"ancestry 1".to_string()));
     }
 }

@@ -1,3 +1,4 @@
+pub mod ancestry;
 pub mod bandwidth;
 pub mod capture;
 pub mod deleted;

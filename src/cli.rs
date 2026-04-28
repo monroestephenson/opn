@@ -79,6 +79,12 @@ pub enum Command {
         filter: FilterArgs,
     },
 
+    /// Show the process ancestry chain (parent, grandparent, ...) for a PID.
+    Ancestry {
+        /// Process ID to inspect.
+        pid: u32,
+    },
+
     /// Show processes still holding deleted files open.
     Deleted {
         #[command(flatten)]
@@ -743,6 +749,30 @@ mod tests {
             Command::Pid { pid, .. } => assert_eq!(pid, 0),
             _ => panic!("Expected Pid command"),
         }
+    }
+
+    #[test]
+    fn test_cli_parse_ancestry() {
+        let cli = Cli::try_parse_from(["opn", "ancestry", "1234"]).unwrap();
+        match cli.command {
+            Command::Ancestry { pid } => assert_eq!(pid, 1234),
+            _ => panic!("Expected Ancestry command"),
+        }
+    }
+
+    #[test]
+    fn test_cli_parse_ancestry_json() {
+        let cli = Cli::try_parse_from(["opn", "ancestry", "99", "--json"]).unwrap();
+        assert!(cli.json);
+        match cli.command {
+            Command::Ancestry { pid } => assert_eq!(pid, 99),
+            _ => panic!("Expected Ancestry command"),
+        }
+    }
+
+    #[test]
+    fn test_cli_parse_ancestry_missing_arg() {
+        assert!(Cli::try_parse_from(["opn", "ancestry"]).is_err());
     }
 
     #[test]
